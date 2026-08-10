@@ -6,6 +6,7 @@ Nobody calls print() for an error. Ever.
 Owner: whole team (changes need everyone's sign-off)
 Tier: 0 — imports nothing from this package
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -13,10 +14,13 @@ from enum import Enum
 from pathlib import Path
 
 
-class Severity(str, Enum):
-    ERROR = "error"      # blocks execution
+class Severity(str, Enum):  # noqa: UP042 - deliberate, see below
+    # Not StrEnum: this is a frozen contract and StrEnum changes what str()
+    # returns ("error" instead of "Severity.ERROR"). Three modules format these.
+    # Switching is a one-line change but needs the whole team to sign off.
+    ERROR = "error"  # blocks execution
     WARNING = "warning"  # blocks only under --strict
-    INFO = "info"        # never blocks
+    INFO = "info"  # never blocks
 
     @property
     def rank(self) -> int:
@@ -26,12 +30,13 @@ class Severity(str, Enum):
 @dataclass(frozen=True, slots=True)
 class Position:
     """0-indexed line, 0-indexed column. Rendered as 1-indexed."""
+
     line: int
     col: int
     end_col: int | None = None
 
     @classmethod
-    def unknown(cls) -> "Position":
+    def unknown(cls) -> Position:
         return cls(line=-1, col=-1)
 
     @property
@@ -41,16 +46,16 @@ class Position:
 
 @dataclass(frozen=True, slots=True)
 class Diagnostic:
-    code: str                       # "YEET-E301"
+    code: str  # "YEET-E301"
     severity: Severity
-    message: str                    # one line, plain language, no jargon
+    message: str  # one line, plain language, no jargon
     file: Path | None = None
     pos: Position | None = None
-    help: str | None = None         # "did you mean `build`?"
-    note: str | None = None         # extra context, optional
-    url: str | None = None          # docs/rules.md#yeet-e301
+    help: str | None = None  # "did you mean `build`?"
+    note: str | None = None  # extra context, optional
+    url: str | None = None  # docs/rules.md#yeet-e301
 
-    def __str__(self) -> str:       # fallback if the renderer ever fails
+    def __str__(self) -> str:  # fallback if the renderer ever fails
         loc = ""
         if self.file:
             loc = str(self.file)
@@ -63,12 +68,13 @@ class Diagnostic:
 @dataclass
 class DiagnosticBag:
     """Collect-don't-raise. Validation layers append; the pipeline decides."""
+
     items: list[Diagnostic] = field(default_factory=list)
 
     def add(self, d: Diagnostic) -> None:
         self.items.append(d)
 
-    def extend(self, ds: "list[Diagnostic] | DiagnosticBag") -> None:
+    def extend(self, ds: list[Diagnostic] | DiagnosticBag) -> None:
         self.items.extend(ds.items if isinstance(ds, DiagnosticBag) else ds)
 
     @property
@@ -91,13 +97,15 @@ class DiagnosticBag:
 
     def sorted(self) -> list[Diagnostic]:
         """Group by file, then by position, so the report reads top-to-bottom."""
-        def key(d: Diagnostic):
+
+        def key(d: Diagnostic) -> tuple[str, int, int, str]:
             return (
                 str(d.file or ""),
                 d.pos.line if d.pos and d.pos.is_known else 1 << 30,
                 d.pos.col if d.pos and d.pos.is_known else 0,
                 d.code,
             )
+
         return sorted(self.items, key=key)
 
     def __len__(self) -> int:

@@ -17,3 +17,6 @@ htmlcov/
 .yeet/artifacts/
 .yeet/.secrets
 .yeet/.secrets.key
+
+# macOS
+.DS_Store

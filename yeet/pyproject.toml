@@ -56,6 +56,18 @@ python_version = "3.11"
 strict = true
 files = ["src"]
 
+# These ship no type stubs. Without this block, `strict = true` fails the build
+# the moment Dev C writes `import docker` — which is Day 2, not Day 5.
+[[tool.mypy.overrides]]
+module = [
+    "docker.*",
+    "watchdog.*",
+    "ruamel.*",
+    "pathspec.*",
+    "keyring.*",
+]
+ignore_missing_imports = true
+
 # --- Architecture enforcement: the tier rule from docs/architecture.md -------
 # Run with:  lint-imports
 [tool.importlinter]
@@ -64,13 +76,20 @@ root_package = "yeet"
 [[tool.importlinter.contracts]]
 name = "Layered architecture (a module may only import from lower tiers)"
 type = "layers"
+# `|` between siblings means INDEPENDENT: they may not import each other.
+# That is deliberate and it is verified — see docs/adr/0007. Consequences:
+#   * executor must not import secrets  -> use core.masking.Masker
+#   * executor must not import storage  -> use core.events.LogSink
+#   * actions therefore cannot sit at tier 5 (the executor consumes it), so it
+#     sits at tier 2 next to parser: it RESOLVES a `uses:` into IR and executes
+#     nothing.
 layers = [
     "yeet.cli",
     "yeet.triggers",
-    "yeet.executor | yeet.actions | yeet.storage | yeet.secrets",
+    "yeet.executor | yeet.storage | yeet.secrets",
     "yeet.planner",
     "yeet.validation",
-    "yeet.parser | yeet.analyzer",
+    "yeet.parser | yeet.analyzer | yeet.actions",
     "yeet.expressions | yeet.reporting",
     "yeet.core",
 ]

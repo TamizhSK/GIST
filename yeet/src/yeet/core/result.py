@@ -3,13 +3,14 @@
 Owner: Dev C + Dev D
 Tier: 0
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
 
 
-class Status(str, Enum):
+class Status(str, Enum):  # noqa: UP042 - frozen contract; StrEnum changes str()
     PENDING = "pending"
     RUNNING = "cooked"
     SUCCESS = "slayed"

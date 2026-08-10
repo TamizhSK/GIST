@@ -11,6 +11,7 @@ day you try to add them is the day you rewrite the parser.
 Owner: whole team (changes need everyone's sign-off)
 Tier: 0 — imports nothing from this package
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -23,17 +24,17 @@ from .diagnostics import Position
 @dataclass
 class Step:
     pos: Position
-    name: str | None = None              # vibe:
+    name: str | None = None  # vibe:
     id: str | None = None
-    run: str | None = None               # bet:      \ exactly
-    uses: str | None = None              # yoink:    / one of these
+    run: str | None = None  # bet:      \ exactly
+    uses: str | None = None  # yoink:    / one of these
     with_: dict[str, Any] = field(default_factory=dict)
-    env: dict[str, str] = field(default_factory=dict)   # drip:
-    if_: str | None = None               # only_if:
+    env: dict[str, str] = field(default_factory=dict)  # drip:
+    if_: str | None = None  # only_if:
     shell: str | None = None
     working_directory: str | None = None
-    continue_on_error: bool = False      # delulu:
-    timeout_minutes: int | None = None   # patience:
+    continue_on_error: bool = False  # delulu:
+    timeout_minutes: int | None = None  # patience:
     key_pos: dict[str, Position] = field(default_factory=dict)
 
     @property
@@ -44,7 +45,7 @@ class Step:
 @dataclass
 class Strategy:
     pos: Position
-    matrix: dict[str, list[Any]] = field(default_factory=dict)   # multiverse:
+    matrix: dict[str, list[Any]] = field(default_factory=dict)  # multiverse:
     include: list[dict[str, Any]] = field(default_factory=list)
     exclude: list[dict[str, Any]] = field(default_factory=list)
     fail_fast: bool = True
@@ -53,15 +54,15 @@ class Strategy:
 
 @dataclass
 class Job:
-    key: str                             # the mapping key: `build`
+    key: str  # the mapping key: `build`
     pos: Position
     name: str | None = None
-    runs_on: str | None = None           # cooked_on:
-    needs: list[str] = field(default_factory=list)      # after:
-    steps: list[Step] = field(default_factory=list)     # moves:
+    runs_on: str | None = None  # cooked_on:
+    needs: list[str] = field(default_factory=list)  # after:
+    steps: list[Step] = field(default_factory=list)  # moves:
     env: dict[str, str] = field(default_factory=dict)
     if_: str | None = None
-    strategy: Strategy | None = None     # squad:
+    strategy: Strategy | None = None  # squad:
     container_image: str | None = None
     dockerfile: str | None = None
     timeout_minutes: int | None = None
@@ -71,22 +72,22 @@ class Job:
 
 @dataclass
 class Trigger:
-    event: str                           # "push", "manual", ...
+    event: str  # "push", "manual", ...
     pos: Position
-    filters: dict[str, Any] = field(default_factory=dict)   # branches, paths...
+    filters: dict[str, Any] = field(default_factory=dict)  # branches, paths...
 
 
 @dataclass
 class Workflow:
     source: Path
     pos: Position
-    name: str | None = None              # vibe:
-    triggers: list[Trigger] = field(default_factory=list)   # when: / on:
-    jobs: dict[str, Job] = field(default_factory=dict)       # the_grind:
+    name: str | None = None  # vibe:
+    triggers: list[Trigger] = field(default_factory=list)  # when: / on:
+    jobs: dict[str, Job] = field(default_factory=dict)  # the_grind:
     env: dict[str, str] = field(default_factory=dict)
     defaults: dict[str, Any] = field(default_factory=dict)
-    raw: Any = None                      # the ruamel tree, for the renderer
-    used_dialect: bool = False           # True if any Gen-Z alias was seen
+    raw: Any = None  # the ruamel tree, for the renderer
+    used_dialect: bool = False  # True if any Gen-Z alias was seen
 
     @property
     def display_name(self) -> str:
