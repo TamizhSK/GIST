@@ -1,0 +1,86 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "yeet"
+version = "0.1.0"
+description = "A local GitHub Actions-compatible runner with a dialect of its own"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.7",
+    "ruamel.yaml>=0.18",
+    "pydantic>=2.7",
+    "jsonschema>=4.22",
+    "docker>=7.1",
+    "watchdog>=4.0",
+    "platformdirs>=4.2",
+    "pathspec>=0.12",
+    "cryptography>=42.0",
+    "jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "import-linter>=2.0",
+    "pre-commit>=3.7",
+]
+
+[project.scripts]
+yeet = "yeet.cli.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/yeet"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "docker: needs a running Docker daemon",
+    "slow: takes more than a second",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "PTH"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]
+
+# --- Architecture enforcement: the tier rule from docs/architecture.md -------
+# Run with:  lint-imports
+[tool.importlinter]
+root_package = "yeet"
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture (a module may only import from lower tiers)"
+type = "layers"
+layers = [
+    "yeet.cli",
+    "yeet.triggers",
+    "yeet.executor | yeet.actions | yeet.storage | yeet.secrets",
+    "yeet.planner",
+    "yeet.validation",
+    "yeet.parser | yeet.analyzer",
+    "yeet.expressions | yeet.reporting",
+    "yeet.core",
+]
+
+[[tool.importlinter.contracts]]
+name = "core is a leaf — it imports nothing from us"
+type = "forbidden"
+source_modules = ["yeet.core"]
+forbidden_modules = [
+    "yeet.cli", "yeet.analyzer", "yeet.parser", "yeet.validation",
+    "yeet.expressions", "yeet.planner", "yeet.executor", "yeet.actions",
+    "yeet.reporting", "yeet.secrets", "yeet.storage", "yeet.triggers",
+]

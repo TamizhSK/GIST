@@ -1,0 +1,41 @@
+# The dialect. LEFT = what users may write, RIGHT = canonical GitHub Actions key.
+#
+# Architectural rule: there is exactly ONE parser. It parses canonical GitHub
+# Actions syntax. This table is applied as a key-rewrite pass immediately after
+# YAML load, which is why real .github/workflows files keep working unchanged.
+#
+# Add aliases freely — it costs one line and zero code.
+
+keys:
+  vibe: name
+  when: "on"
+  the_grind: jobs
+  missions: jobs
+  cooked_on: runs-on
+  moves: steps
+  bet: run
+  cook: run
+  yoink: uses
+  borrow: uses
+  after: needs
+  waits_for: needs
+  only_if: if
+  no_cap_if: if
+  drip: env
+  tea: secrets
+  squad: strategy
+  multiverse: matrix
+  loot: artifacts
+  stash: cache
+  patience: timeout-minutes
+  delulu: continue-on-error
+  its_fine: continue-on-error
+  where: working-directory
+  manual: workflow_dispatch     # event name, not a key — handled in builder.py
+
+status:
+  success: slayed
+  failure: flopped
+  partial: mid
+  running: cooked
+  skipped: "skipped (not the vibe)"

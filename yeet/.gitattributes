@@ -1,0 +1,9 @@
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+
+# Step scripts MUST be LF or bash inside the container dies with $'\r'
+*.sh text eol=lf
+src/**/templates/** text eol=lf
+tests/fixtures/** text eol=lf
+tests/invalid/** text eol=lf
