@@ -1,18 +1,25 @@
 # Getting Started — Day 0 to first green run
 
-Companion to `yeet-runner-build-guide.md`. That one says *what* to build; this
-one says *where each thing lives* and *what to do in which order*.
+Companion to [`architecture.md`](architecture.md). That one says *what* to build;
+this one says *where each thing lives* and *what to do in which order*.
 
-Run `bootstrap.py` first — it creates everything described below.
+> **The skeleton already exists — do not run `tools/bootstrap.py`.**
+> It generated this tree once, and it has since fallen out of date: its embedded
+> stubs still carry the pre-Day-0 signatures and it still writes
+> `secrets/masking.py`, which we deleted. Running it with `--force` would revert
+> Day 0. Clone the repo instead.
 
 ```bash
-python bootstrap.py --into ~/dev/yeet
-cd ~/dev/yeet
-git init && git add -A && git commit -m "chore: day 0 skeleton"
+git clone <this repo> && cd yeet
+python -m venv .venv && source .venv/bin/activate   # PS: .venv\Scripts\Activate.ps1
+pip install -e ".[dev]" && pre-commit install
+make check                                          # must be green before you start
 ```
 
-Change the `PKG` constant at the top of the script to rename the whole tool
-before you run it.
+Day 0's mechanical work is done: the skeleton lints, type-checks, satisfies the
+tier contract and `yeet --help` runs. See [`../../plan.md`](../../plan.md) §0 for
+exactly what changed and [`adr/0007`](adr/0007-tier-rule-consequences.md) for the
+architectural consequences that this document's §1 tree predates.
 
 ---
 
@@ -30,14 +37,16 @@ the same file. And the tier rule means a broken module can only break things
 ```
 src/yeet/
 ├── core/          tier 0   ← FROZEN. Imports nothing. Everyone imports it.
+│                             ir · diagnostics · result · codes · config
+│                             masking · events · project · graph   ← see ADR 0007
 ├── expressions/   tier 1   Dev B
 ├── reporting/     tier 1   Dev D
 ├── parser/        tier 2   Dev A
 ├── analyzer/      tier 2   Dev A
+├── actions/       tier 2   Dev A + C   ← resolves `uses:` to IR, executes nothing
 ├── validation/    tier 3   Dev A (L1,L2) · B (L3) · D (L0,L4)
 ├── planner/       tier 4   Dev B
 ├── executor/      tier 5   Dev C
-├── actions/       tier 5   Dev A + C
 ├── secrets/       tier 5   Dev D
 ├── storage/       tier 5   Dev D
 ├── triggers/      tier 6   Dev D
@@ -47,6 +56,13 @@ src/yeet/
 **The rule: a module may import from lower tiers only. Never sideways, never
 up.** `executor` never imports `cli`. `parser` never imports `executor`. If two
 modules at the same tier need to share something, it moves down into `core`.
+
+That last sentence is not hypothetical — it happened four times on Day 0. The
+executor cannot import `secrets` or `storage` (independent siblings), and
+validation cannot import `planner` (that's upward), so masking, the log sink and
+the cycle walk all moved down into `core/`, and `actions/` moved from tier 5 to
+tier 2. [`adr/0007`](adr/0007-tier-rule-consequences.md) has the verification
+output and the reasoning.
 
 This isn't a suggestion you have to police in review — `pyproject.toml` ships
 an `import-linter` contract that enforces it. `lint-imports` fails CI the
@@ -185,8 +201,13 @@ plan = build_plan(wf, contexts)
 Matrix expansion first, then the DAG, then topological sort into waves. Jobs
 inside a wave run in parallel; waves run in sequence.
 
-`planner/graph.py::find_cycle()` does double duty — the scheduler needs it, and
-Layer 3 validation calls the same function for `E302`. Write it once.
+`find_cycle()` does double duty — the scheduler needs it, and Layer 3 validation
+calls the same function for `E302`. Write it once.
+
+It lives in **`core/graph.py`**, not `planner/graph.py`: validation is tier 3 and
+the planner is tier 4, so calling into the planner would be an upward import.
+`planner/graph.py` is a ten-line `Job`-shaped adapter over it. Same function,
+one tier lower. See [`adr/0007`](adr/0007-tier-rule-consequences.md).
 
 ### ⑤ Execute — `executor/`
 
@@ -227,8 +248,8 @@ Build the prefix first and every command downstream comes almost free.
 
 Do these with all four of you in one room. It's three or four hours.
 
-**1. One person runs `bootstrap.py` and pushes.** Everyone else clones. Do not
-have four people scaffolding in parallel.
+**1. ~~One person runs `bootstrap.py` and pushes.~~ Already done** — the skeleton
+is in the repo and green. Everyone clones. Do not re-run the bootstrap script.
 
 **2. Everyone gets a working env.**
 ```bash

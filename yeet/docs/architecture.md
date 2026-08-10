@@ -2,6 +2,25 @@
 
 **Working codename used throughout:** `yeet` (rename freely — the CLI name is a one-line constant)
 
+> ### Amended by ADR 0007 — read this before you follow §3.4, §3.10 or §6
+>
+> This document's reasoning still stands; four of its *placements* do not. The
+> `import-linter` contract in `pyproject.toml` makes same-tier siblings
+> **independent**, which forbids three imports this guide implies, and one more
+> is an upward import. Verified, not assumed — see
+> [`adr/0007`](adr/0007-tier-rule-consequences.md).
+>
+> | This guide says | Actually |
+> |---|---|
+> | masking lives in `secrets/` (§5, §6 Dev D) | pure `Masker` is in **`core/masking.py`**; `secrets/store.py` keeps only loading and decryption. `executor` may not import `secrets`. |
+> | the executor writes run logs via `storage/` (§5) | the executor emits to a **`core.events.LogSink`** Protocol; `storage.runs` implements it. `executor` may not import `storage`. |
+> | `actions/` sits beside the executor (§3.7) | `actions/` is **tier 2**, beside `parser/`. It resolves `uses:` into IR and executes nothing; the executor consumes the result. |
+> | "`planner/graph.py::find_cycle()` does double duty" (§3.4) | the walk is in **`core/graph.py`**. Validation is tier 3 and the planner is tier 4, so Layer 3 cannot call into the planner. `planner/graph.py` is a thin adapter. |
+>
+> Everything else — the pipeline, the five validation layers, the diagnostic
+> codes, one-container-per-job, the cross-platform checklist — is unchanged.
+> `plan.md` is the file-by-file assignment; this is the *why*.
+
 ---
 
 ## 0. Read this first: the one decision that makes or breaks the week

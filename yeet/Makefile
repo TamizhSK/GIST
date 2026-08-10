@@ -24,6 +24,10 @@ docker:             ## needs the daemon
 	pytest -m docker -q
 
 rules:              ## regenerate docs/rules.md from core/codes.py — never hand-edit it
+	@test -f tools/gen_rules_doc.py || { \
+	  echo "tools/gen_rules_doc.py does not exist yet — that script is Dev D / task D18."; \
+	  echo "It generates docs/rules.md from core/codes.py so the two cannot drift."; \
+	  exit 1; }
 	python tools/gen_rules_doc.py
 
 all: fmt check

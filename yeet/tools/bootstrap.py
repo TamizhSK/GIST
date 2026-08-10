@@ -2,11 +2,26 @@
 """
 bootstrap.py — creates the full `yeet` project skeleton.
 
-Run once, on Day 0, by ONE person. Commit the result. Everyone else clones.
-
-    python bootstrap.py            # creates ./yeet
-    python bootstrap.py --into ~/dev/yeet
-    python bootstrap.py --force    # overwrite existing files
+╔══════════════════════════════════════════════════════════════════════════╗
+║  HISTORICAL ARTIFACT — DO NOT RE-RUN.                                    ║
+║                                                                          ║
+║  This script generated the skeleton once. That skeleton is now in the    ║
+║  repo, and it has moved on:                                              ║
+║                                                                          ║
+║    * the stubs embedded below still carry the PRE-DAY-0 signatures       ║
+║      (discover_flows -> list[Path], normalize(node) -> object,           ║
+║       validate_file(...) -> DiagnosticBag). plan.md §4 is authoritative. ║
+║    * it still writes secrets/masking.py, which ADR 0007 deleted.         ║
+║    * it does not know about core/{masking,events,project,graph}.py       ║
+║      and writes the pre-ADR-0007 import-linter contract.                 ║
+║                                                                          ║
+║  It skips files that already exist, so a plain run is merely useless —   ║
+║  but `--force` WILL revert Day 0. Clone the repo instead.                ║
+║                                                                          ║
+║  Kept because it documents how the tree was laid out, and because the    ║
+║  layout argument is worth a slide. If you ever regenerate from it, diff  ║
+║  the result against HEAD before committing anything.                     ║
+╚══════════════════════════════════════════════════════════════════════════╝
 
 Works on Windows, macOS, Linux and WSL. Only uses the stdlib.
 """

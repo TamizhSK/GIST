@@ -14,8 +14,13 @@ yeet run           # run it in Docker
 
 ## Status
 
-Day 0 skeleton. See `docs/architecture.md` for the design and
-`docs/rules.md` for the diagnostic code registry.
+Day 0 skeleton, wired and green — every subsystem is a stub with a frozen
+signature. See `docs/architecture.md` for the design (amended by
+`docs/adr/0007`), `../plan.md` for the file-by-file ownership map, and
+`docs/getting-started.md` for what to do first.
+
+`docs/rules.md` — the diagnostic code registry — is generated from
+`core/codes.py` by `make rules`. Not written yet (Dev D, task D18).
 
 ## Development
 

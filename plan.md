@@ -33,7 +33,8 @@ yeet --help              lists all 10 commands
 | Change | Detail |
 |---|---|
 | `build-guide.md` → `yeet/docs/architecture.md` | the file every stub's docstring points at now exists |
-| `Context.md` → `yeet/docs/getting-started.md` | duplicate 47 KB root `README.md` gone |
+| `Context.md` → `yeet/docs/getting-started.md` | — |
+| root `README.md` rewritten | it was a byte-identical 47 KB copy of the build guide; now a ~30-line landing page pointing at `yeet/`, the two docs and this plan |
 | `boostrap.py` → `yeet/tools/bootstrap.py` | typo fixed |
 | `.DS_Store` × 3 untracked | added to `.gitignore` |
 | **All ~60 stubs fixed** | missing imports added; §4 signatures applied; 43 mypy + 92 ruff errors → 0 |
@@ -48,6 +49,11 @@ yeet --help              lists all 10 commands
 | `cli/__init__.py` | exit-code constants: 0 ok, 1 job failed, 2 bad file, 3 no docker |
 | `Makefile` | `make check` = the CI set |
 | `docs/adr/0007` | records the tier decision and the verification output |
+| `docs/architecture.md` banner | four of its placements are superseded by ADR 0007 — the banner says which, so nobody codes from the stale version |
+| `docs/getting-started.md` | tier tree corrected (`actions/` is tier 2), bootstrap instructions replaced with a do-not-run warning |
+| `tools/bootstrap.py` | warning header: its embedded stubs predate Day 0 and `--force` would revert it |
+| CI + `Makefile` | CI now runs all five `make check` gates (`mypy` and `ruff format --check` were missing); `make rules` fails readably instead of with a traceback |
+| `cli/__init__.py::todo()` | exits **1**, not 0 — a placeholder that reports success would defeat the validation gate |
 | whole tree `ruff format`ted | pre-commit would have done this on the first commit anyway; better now than mid-PR on Tuesday |
 
 **Two conventions this locked in.** Both are worth knowing before you write your

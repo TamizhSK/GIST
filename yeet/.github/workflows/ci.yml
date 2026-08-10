@@ -20,7 +20,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      # These five are exactly `make check`. Keep them in sync — the point is
+      # that a green local run means a green PR.
       - run: pip install -e ".[dev]"
       - run: ruff check src tests
+      - run: ruff format --check src tests
       - run: lint-imports
+      - run: mypy src
       - run: pytest -m "not docker" --cov=yeet

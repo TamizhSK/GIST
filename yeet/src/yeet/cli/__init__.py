@@ -30,4 +30,8 @@ def todo(command: str, owner: str) -> None:
         fg=typer.colors.YELLOW,
         err=True,
     )
-    raise typer.Exit(EXIT_OK)
+    # Exit 1, never 0: a placeholder must not look like success. `yeet check`
+    # returning 0 on a broken workflow is exactly what the validation gate
+    # exists to prevent, and a git hook or smoke test would believe it.
+    # Not EXIT_JOB_FAILED or EXIT_BAD_WORKFLOW — neither is true here.
+    raise typer.Exit(1)
