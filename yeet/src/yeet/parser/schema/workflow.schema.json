@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yeet.dev/schemas/workflow.schema.json",
+  "title": "yeet workflow (canonical GitHub Actions form)",
+  "description": "The canonical form ONLY — aliases from aliases.yml are normalized away before this schema runs (layer2_schema.py). One schema, no dialect keys here. Unknown keys, unknown events and step run/uses are checked by layer2_schema.py directly because jsonschema's errors for those cases are unreadable; this file validates structure and types.",
+  "type": "object",
+  "required": ["on", "jobs"],
+  "properties": {
+    "name": { "type": "string" },
+    "on": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } },
+        { "type": "object", "minProperties": 1 }
+      ]
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "defaults": { "type": "object" },
+    "jobs": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$" },
+      "additionalProperties": { "$ref": "#/$defs/job" }
+    }
+  },
+  "$defs": {
+    "job": {
+      "type": "object",
+      "required": ["steps"],
+      "properties": {
+        "name": { "type": "string" },
+        "runs-on": { "type": "string" },
+        "needs": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        },
+        "env": { "type": "object" },
+        "if": { "type": "string" },
+        "strategy": { "$ref": "#/$defs/strategy" },
+        "container": { "type": ["string", "object"] },
+        "timeout-minutes": { "type": "integer" },
+        "outputs": { "type": "object" },
+        "steps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/step" }
+        }
+      }
+    },
+    "strategy": {
+      "type": "object",
+      "properties": {
+        "matrix": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "array" },
+              { "type": "boolean" },
+              { "type": "number" },
+              { "type": "string" }
+            ]
+          }
+        },
+        "fail-fast": { "type": "boolean" },
+        "max-parallel": { "type": "integer" }
+      }
+    },
+    "step": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "id": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$" },
+        "run": { "type": "string" },
+        "uses": { "type": "string" },
+        "with": { "type": "object" },
+        "env": { "type": "object" },
+        "if": { "type": "string" },
+        "shell": { "type": "string" },
+        "working-directory": { "type": "string" },
+        "continue-on-error": { "type": "boolean" },
+        "timeout-minutes": { "type": "integer" }
+      }
+    }
+  }
+}

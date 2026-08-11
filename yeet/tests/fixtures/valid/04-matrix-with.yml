@@ -1,0 +1,27 @@
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ["18", "20"]
+        include:
+          - os: ubuntu-latest
+            node: "22"
+            extra: true
+        exclude:
+          - os: windows-latest
+            node: "18"
+    steps:
+      - name: setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: npm test
+        working-directory: frontend
+        shell: bash
+        continue-on-error: true

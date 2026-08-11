@@ -50,12 +50,27 @@ RULES: dict[str, Rule] = {
         # Layer 2 — schema
         _e("E201", "unknown key", 2),
         _e("E202", "required key missing", 2),
+        _e("E203", "wrong type (e.g. `needs: 5`; scalar `needs: build` is fine)", 2),
         _e("E204", "step has both `run` and `uses`", 2),
         _e("E205", "step has neither `run` nor `uses`", 2),
+        _e("E206", "empty jobs / no jobs defined", 2),
+        _e("E207", "invalid job or step id (must match `[A-Za-z_][A-Za-z0-9_-]*`)", 2),
+        _e("E208", "`on:`/`when:` names an unsupported event", 2),
         # Layer 3 — semantic
         _e("E301", "`needs` references an unknown job", 3),
         _e("E302", "dependency cycle", 3),
         _e("E309", "expression fails to parse", 3),
+        # E313/E314/W319 fire from actions/ (tier 2) rather than layer 3: the
+        # resolver runs after layers 1-2 are clean, which is where the layer 3
+        # gate holds. See actions/resolver.py.
+        _e(
+            "E313",
+            "`uses:` points at a local path that doesn't exist, or an `action.yml` "
+            "that's missing/invalid",
+            3,
+        ),
+        _e("E314", "required input of an action not supplied in `with:`", 3),
+        _w("W319", "`with:` supplies an input the action's `action.yml` doesn't declare", 3),
         # Fires from executor/images.py rather than layer 3: resolution needs
         # the image table, which is tier 5, and validation is tier 3. The gate
         # still holds — it just holds before the container is created rather

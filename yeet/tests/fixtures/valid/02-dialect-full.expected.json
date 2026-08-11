@@ -1,0 +1,90 @@
+{
+  "defaults": {},
+  "env": {
+    "NODE_ENV": "production"
+  },
+  "jobs": {
+    "build": {
+      "container_image": null,
+      "dockerfile": null,
+      "env": {},
+      "if": null,
+      "key": "build",
+      "name": null,
+      "needs": [],
+      "outputs": {},
+      "runs_on": "ubuntu-latest",
+      "steps": [
+        {
+          "continue_on_error": false,
+          "env": {},
+          "id": null,
+          "if": null,
+          "name": "pull up the code",
+          "run": null,
+          "shell": null,
+          "timeout_minutes": null,
+          "uses": "actions/checkout@v4",
+          "with": {},
+          "working_directory": null
+        },
+        {
+          "continue_on_error": false,
+          "env": {},
+          "id": null,
+          "if": null,
+          "name": "install deps",
+          "run": "npm ci",
+          "shell": null,
+          "timeout_minutes": null,
+          "uses": null,
+          "with": {},
+          "working_directory": null
+        },
+        {
+          "continue_on_error": false,
+          "env": {},
+          "id": null,
+          "if": null,
+          "name": "run tests",
+          "run": "npm test",
+          "shell": null,
+          "timeout_minutes": 10,
+          "uses": null,
+          "with": {},
+          "working_directory": null
+        }
+      ],
+      "strategy": {
+        "exclude": [],
+        "fail_fast": true,
+        "include": [],
+        "matrix": {
+          "node": [
+            18,
+            20,
+            22
+          ]
+        },
+        "max_parallel": null
+      },
+      "timeout_minutes": null
+    }
+  },
+  "name": "hello",
+  "triggers": [
+    {
+      "event": "push",
+      "filters": {
+        "branches": [
+          "main"
+        ]
+      }
+    },
+    {
+      "event": "workflow_dispatch",
+      "filters": {}
+    }
+  ],
+  "used_dialect": true
+}

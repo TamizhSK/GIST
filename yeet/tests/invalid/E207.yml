@@ -1,0 +1,5 @@
+on: push
+jobs:
+  "9 lives":
+    steps:
+      - run: "echo hi"

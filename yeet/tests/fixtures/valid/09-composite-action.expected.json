@@ -1,0 +1,57 @@
+{
+  "defaults": {},
+  "env": {},
+  "jobs": {
+    "build": {
+      "container_image": null,
+      "dockerfile": null,
+      "env": {},
+      "if": null,
+      "key": "build",
+      "name": null,
+      "needs": [],
+      "outputs": {},
+      "runs_on": "ubuntu-latest",
+      "steps": [
+        {
+          "continue_on_error": false,
+          "env": {},
+          "id": null,
+          "if": null,
+          "name": null,
+          "run": null,
+          "shell": null,
+          "timeout_minutes": null,
+          "uses": "./.yeet/actions/checkout",
+          "with": {
+            "repo": "org/app"
+          },
+          "working_directory": null
+        },
+        {
+          "continue_on_error": false,
+          "env": {},
+          "id": null,
+          "if": null,
+          "name": null,
+          "run": "echo built",
+          "shell": null,
+          "timeout_minutes": null,
+          "uses": null,
+          "with": {},
+          "working_directory": null
+        }
+      ],
+      "strategy": null,
+      "timeout_minutes": null
+    }
+  },
+  "name": "composite use",
+  "triggers": [
+    {
+      "event": "push",
+      "filters": {}
+    }
+  ],
+  "used_dialect": false
+}

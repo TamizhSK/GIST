@@ -1,0 +1,22 @@
+name: pipeline
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run lint
+  test:
+    name: unit tests
+    needs: [lint]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - run: npm test
+  deploy:
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run deploy

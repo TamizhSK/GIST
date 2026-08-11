@@ -1,0 +1,74 @@
+{
+  "defaults": {},
+  "env": {},
+  "jobs": {
+    "build": {
+      "container_image": null,
+      "dockerfile": null,
+      "env": {
+        "CI": "true"
+      },
+      "if": null,
+      "key": "build",
+      "name": null,
+      "needs": [],
+      "outputs": {},
+      "runs_on": "ubuntu-latest",
+      "steps": [
+        {
+          "continue_on_error": false,
+          "env": {},
+          "id": "gen",
+          "if": null,
+          "name": null,
+          "run": "echo \"x=1\" >> \"$GITHUB_OUTPUT\"",
+          "shell": null,
+          "timeout_minutes": null,
+          "uses": null,
+          "with": {},
+          "working_directory": null
+        },
+        {
+          "continue_on_error": false,
+          "env": {},
+          "id": null,
+          "if": "always()",
+          "name": null,
+          "run": "echo \"got ${{ steps.gen.outputs.x }}\"",
+          "shell": null,
+          "timeout_minutes": null,
+          "uses": null,
+          "with": {},
+          "working_directory": null
+        },
+        {
+          "continue_on_error": false,
+          "env": {},
+          "id": null,
+          "if": "${{ !cancelled() }}",
+          "name": null,
+          "run": "echo skipped normally",
+          "shell": null,
+          "timeout_minutes": null,
+          "uses": null,
+          "with": {},
+          "working_directory": null
+        }
+      ],
+      "strategy": null,
+      "timeout_minutes": null
+    }
+  },
+  "name": null,
+  "triggers": [
+    {
+      "event": "push",
+      "filters": {}
+    },
+    {
+      "event": "pull_request",
+      "filters": {}
+    }
+  ],
+  "used_dialect": false
+}

@@ -7,8 +7,12 @@ See docs/architecture.md
 
 from __future__ import annotations
 
+import json
+import re
+import tomllib
 from pathlib import Path
 
+from yeet.analyzer.markers import EXTENSION_MARKERS, MARKERS
 from yeet.core.project import Ecosystem
 
 
@@ -17,5 +21,73 @@ def fingerprint(root: Path) -> list[Ecosystem]:
 
     Read `engines.node` from package.json and `requires-python` from
     pyproject.toml to pin `Ecosystem.version` rather than guessing a tag.
+
+    Entries with an empty suggested image (Dockerfile, docker-compose.yml) are
+    infra, not a stack to run — the Dockerfile surfaces as `Project.dockerfile`
+    and compose is noted by the scan report, so neither becomes an Ecosystem.
     """
-    raise NotImplementedError
+    root = root.expanduser().resolve()
+    seen: set[str] = set()
+    found: list[Ecosystem] = []
+
+    def add(name: str, marker: Path, image: str, commands: list[str]) -> None:
+        if name in seen or not image:
+            return
+        seen.add(name)
+        version = None
+        if name == "node" and marker.name == "package.json":
+            version = _engines_node(marker)
+        elif name == "python" and marker.name == "pyproject.toml":
+            version = _requires_python(marker)
+        if version and ":" in image:
+            image = f"{image.split(':')[0]}:{version}"
+        found.append(
+            Ecosystem(
+                name=name,
+                marker=marker,
+                suggested_image=image,
+                default_commands=list(commands),
+                version=version,
+            )
+        )
+
+    for marker_name, (name, image, commands) in MARKERS.items():
+        marker = root / marker_name
+        if marker.is_file():
+            add(name, marker, image, list(commands))
+
+    for ext, (name, image, commands) in EXTENSION_MARKERS.items():
+        matches = sorted(root.glob(f"*{ext}"))
+        if matches:
+            add(name, matches[0], image, list(commands))
+
+    return found
+
+
+def _engines_node(package_json: Path) -> str | None:
+    """`"engines": {"node": ">=18.20"}` -> `"18"`. Never raises."""
+    try:
+        data = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    engines = data.get("engines") if isinstance(data, dict) else None
+    node = engines.get("node") if isinstance(engines, dict) else None
+    if not isinstance(node, str):
+        return None
+    match = re.search(r"\d+", node)
+    return match.group(0) if match else None
+
+
+def _requires_python(pyproject: Path) -> str | None:
+    """`[project] requires-python = ">=3.11"` -> `"3.11"`. Never raises."""
+    try:
+        with pyproject.open("rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    project = data.get("project") if isinstance(data, dict) else None
+    requires = project.get("requires-python") if isinstance(project, dict) else None
+    if not isinstance(requires, str):
+        return None
+    match = re.search(r"\d+\.\d+", requires)
+    return match.group(0) if match else None
