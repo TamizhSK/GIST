@@ -399,3 +399,31 @@ Architecture Decision Records: Created ADRs 0002 through 0006 in
 
 docs/adr/
 .
+
+
+
+
+
+# session-3
+
+
+Here's the per-item context for Dev A's plan, A3–A20:
+A3 — analyzer/root.py: Walk up from the start dir for .git/ → .yeet/ → .github/workflows/ → ecosystem marker; highest priority wins; stops at FS root or $HOME; never shells out to git. ✓ Implemented. Tests added this session: git repo, bare dir, nested subdir, $HOME boundary (incl. a marker found from below home).
+A4 — analyzer/markers.py: Marker→ecosystem→image→default-commands table. Now 16 file markers + 2 extension markers (.csproj/.sln), all filled, no # ... left. ✓ + a table-completeness test.
+A5 — analyzer/discover.py: Walk down with EXCLUDE_DIRS, MAX_DEPTH=5, MAX_FILES=20_000, no symlink follow, inode visited-set, per-dir PermissionError handling, .gitignore/.yeetignore via pathspec. Returns flows in precedence order .yeet/flows/ > .github/workflows/ > root yeet.yml, plus foreign CI (.gitlab-ci.yml/Jenkinsfile) reported separately. ✓ Tests added: monorepo w/ node_modules, precedence, foreign CI, depth+ignore, unreadable dir (monkeypatched os.scandir), truncation flag, symlink loop (skips on Windows without symlink privilege).
+A6 — analyzer/fingerprint.py: Marker → Ecosystem; reads engines.node from package.json and requires-python from pyproject.toml to pin the version instead of guessing. Dockerfile/compose are infra, not ecosystems. ✓ Tests added: Node (node:18), Python (python:3.11), polyglot, infra exclusion.
+A7 — analyzer/project.py: analyze() = A3→A5→A6 + is_git, branch (read from .git/HEAD, never shells out), dockerfile. No YAML parsed here. ✓ Tests added: populated Project (git+branch+flows+foreign+ecosystem+dockerfile) and a bare no-git project.
+A8 — cli/app.py: Global --no-color option + honors NO_COLOR env. ✓ Wired in the callback, consumed via _color_enabled in scan. Verified live with yeet --no-color scan and NO_COLOR=1. No CLI harness, so it's hand-verified only.
+A9 — cli/cmd_scan.py: The §3.9 report: project line, git/branch, stack, markers, flows with per-flow validity (validate_file upto=2), Dockerfile hint. Zero flows → suggest init --auto, exit 0. ✓ Works end-to-end (smoke-tested on this workspace — root detection correctly climbed to the parent git root). Caveat: per-flow validity prints "validation not built yet" because Dev D's pipeline.validate_file is still a stub; the "3 real repos" target was smoke-tested manually.
+A10 — parser/loader.py: ruamel.yaml typ="rt"; E101 syntax (problem_mark), E102 duplicate keys (constructor subclass that raises), E103 non-mapping root, E104 multi-doc, W105 on:→True trap (renames the key, warns). ✓ Gap closed this session: the required tests/invalid/E101.yml…W105.yml fixtures didn't exist — created all 5 + a parametrized test asserting each fires only its code.
+A11 — parser/aliases.py: Load aliases.yml once, recursive key rewrite, returns (tree, used_dialect); never fails/warns. manual→workflow_dispatch is handled in the builder, not here. ✓ Covered by golden test 01 (canonical passes through unchanged) and 02 (dialect file rewrites).
+A12 — parser/schema/workflow.schema.json: JSON Schema for canonical form only (aliases normalized away). ✓ Present; exercised through layer2 + all golden fixtures.
+A13 — validation/layer2_schema.py: jsonschema + best_match, absolute path → jobs.build.steps[2].run; E201 unknown key (with A15 suggestion), E202 missing required, E203 wrong type, E206 empty jobs, E207 invalid id, E208 unsupported event. ✓ Gap closed this session: tests/invalid/E201…E208.yml (8 fixtures, each verified to emit exactly its own code) + the same parametrized test.
+A14 — validation/layer1_yaml.py: Thin wrapper over A10 for the pipeline's layer interface. ✓ Present.
+A15 — validation/suggest.py: difflib.get_close_matches against canonical keys and aliases. ✓ Implemented and exercised via E201/E208 did-you-mean help text; no dedicated unit test (minor).
+A16 — parser/builder.py: dict tree → IR; every Step(pos=...) from lc.value(key), key_pos populated, E204 (both run+uses) / E205 (neither), scalar needs: build → list. ✓ Golden tests exist; gap partially closed: corpus grew 6→9 (added defaults/step-options, multi-job needs DAG, composite use) — still short of the ~20 target, but every IR field is now covered.
+A17 — actions/resolver.py + composite.py: local composite (./.yeet/actions/foo/action.yml, runs.using: composite), with: → INPUT_*, defaults, E313/E314/W319. ✓ Unit tests existed; gap closed this session: the literal acceptance "composite expands to list[Step] in a golden test" — added 09-composite-action.yml + .expanded.json and the test in test_actions.py.
+A18 — templates/ + cmd_init.py: Jinja2 per-ecosystem templates, init --auto from the fingerprint, writes .gitignore for .yeet/tmp|runs|.secrets. ✓ test_templates.py covers auto-init/fingerprint (passed). Caveat: "yeet check on the result is clean" is still blocked by Dev D's pipeline stub — I verified layers 1–3 directly instead.
+A19 — demo ./.yeet/actions/checkout/: Ship your own composite so the demo has zero external deps. ✓ Present at .yeet/actions/checkout/action.yml; also reused as the A17 golden fixture. Offline run still needs Dev C's executor wiring.
+A20 — actions/resolver.py remote (stretch): owner/repo@ref → shallow git clone --depth 1 into ~/.yeet/actions/, cached by ref, failed clone = E313. ✓ Implemented with a test double for git_clone; unit-tested (resolve, cache hit skips clone, refs distinct, E313).
+Blockers (external, not Dev A's code): yeet check/per-flow validity/offline run depend on Dev D's pipeline.validate_file and Dev C's executor, both still stubs. Net: 224 passed, 37 skipped.

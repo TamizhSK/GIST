@@ -1,0 +1,46 @@
+{
+  "defaults": {},
+  "env": {},
+  "jobs": {
+    "deploy": {
+      "container_image": "node:20",
+      "dockerfile": null,
+      "env": {},
+      "if": null,
+      "key": "deploy",
+      "name": null,
+      "needs": [],
+      "outputs": {
+        "url": "${{ steps.deploy.outputs.url }}"
+      },
+      "runs_on": "ubuntu-latest",
+      "steps": [
+        {
+          "continue_on_error": false,
+          "env": {
+            "TOKEN": "${{ secrets.DEPLOY_TOKEN }}"
+          },
+          "id": null,
+          "if": null,
+          "name": "deploy",
+          "run": "echo deploying",
+          "shell": null,
+          "timeout_minutes": null,
+          "uses": null,
+          "with": {},
+          "working_directory": null
+        }
+      ],
+      "strategy": null,
+      "timeout_minutes": 30
+    }
+  },
+  "name": null,
+  "triggers": [
+    {
+      "event": "push",
+      "filters": {}
+    }
+  ],
+  "used_dialect": false
+}

@@ -1,0 +1,15 @@
+on:
+  push: {}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    container:
+      image: node:20
+    timeout-minutes: 30
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - name: deploy
+        run: echo deploying
+        env:
+          TOKEN: ${{ secrets.DEPLOY_TOKEN }}

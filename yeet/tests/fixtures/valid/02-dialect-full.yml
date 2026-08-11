@@ -1,0 +1,21 @@
+vibe: hello
+when:
+  push:
+    branches: [main]
+  manual: {}
+drip:
+  NODE_ENV: production
+the_grind:
+  build:
+    cooked_on: ubuntu-latest
+    squad:
+      multiverse:
+        node: [18, 20, 22]
+    moves:
+      - vibe: pull up the code
+        yoink: actions/checkout@v4
+      - vibe: install deps
+        bet: npm ci
+      - vibe: run tests
+        bet: npm test
+        patience: 10

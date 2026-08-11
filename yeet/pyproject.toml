@@ -65,6 +65,8 @@ module = [
     "ruamel.*",
     "pathspec.*",
     "keyring.*",
+    "typer.*",
+    "jsonschema.*",
 ]
 ignore_missing_imports = true
 

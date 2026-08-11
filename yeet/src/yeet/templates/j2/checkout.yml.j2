@@ -1,0 +1,21 @@
+name: "checkout"
+description: "Place the project files (yeet's zero-dependency checkout)"
+inputs:
+  path:
+    description: "Where to put the project files; '.' means it's already there"
+    default: "."
+runs:
+  using: composite
+  steps:
+    - name: "place the project files"
+      run: |
+        set -e
+        src="${GITHUB_WORKSPACE}"
+        dst="${INPUT_PATH:-.}"
+        if [ "$dst" = "." ]; then
+          echo "project files are already at \${GITHUB_WORKSPACE}"
+        else
+          mkdir -p "$dst"
+          cp -rT "$src" "$dst"
+        fi
+      shell: bash
