@@ -12,7 +12,7 @@ from typing import Annotated
 
 import typer
 
-from yeet.cli import todo
+from yeet.triggers import hooks
 
 hooks_app = typer.Typer(no_args_is_help=True, help="Git hook integration.")
 
@@ -23,7 +23,14 @@ def install(
     blocking: Annotated[bool, typer.Option("--blocking", help="Fail the push on red.")] = False,
 ) -> None:
     """post-commit + pre-push shims, chmod 0o755, shebang-sh so Windows works."""
-    todo("hooks install", "Dev D")
+    root = path if path.exists() else Path.cwd()
+    try:
+        installed = hooks.install_hooks(root, blocking=blocking)
+        print("Installed git hooks:")
+        for h in installed:
+            print(f"  • {h}")
+    except Exception as exc:
+        print(f"Failed to install hooks: {exc}")
 
 
 @hooks_app.command("uninstall")
@@ -31,4 +38,11 @@ def uninstall(
     path: Annotated[Path, typer.Argument(help="Repository to clean.")] = Path(),
 ) -> None:
     """Remove only the hooks we wrote. Never clobber a hook we did not create."""
-    todo("hooks uninstall", "Dev D")
+    root = path if path.exists() else Path.cwd()
+    removed = hooks.uninstall_hooks(root)
+    if not removed:
+        print("No yeet git hooks found to uninstall.")
+        return
+    print("Removed yeet git hooks:")
+    for h in removed:
+        print(f"  • {h}")

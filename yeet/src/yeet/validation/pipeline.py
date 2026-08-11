@@ -29,4 +29,75 @@ def validate_file(
     `upto` is what makes every command a prefix of the same pipeline:
       scan -> upto=2   check -> upto=4   run -> upto=3 (+ layer 4, non-blocking)
     """
-    raise NotImplementedError
+    bag = DiagnosticBag()
+    workflow: Workflow | None = None
+
+    # --- Layer 0: File & encoding checks (Dev D) ---
+    from yeet.validation import layer0_file
+
+    try:
+        bag0 = layer0_file.check(path)
+        bag.extend(bag0)
+        if bag.has_errors() or upto < 1:
+            return bag, workflow
+    except NotImplementedError:
+        pass
+
+    # --- Layer 1: YAML parsing & aliases (Dev A) ---
+    from yeet.validation import layer1_yaml
+
+    data: object | None = None
+    try:
+        bag1, data = layer1_yaml.check(path)
+        bag.extend(bag1)
+        if bag.has_errors() or data is None or upto < 2:
+            return bag, workflow
+    except NotImplementedError:
+        # Layer 1 not implemented yet by Dev A
+        return bag, workflow
+
+    # --- Layer 2: Schema validation (Dev A) ---
+    from yeet.validation import layer2_schema
+
+    try:
+        bag2 = layer2_schema.check(data, path)
+        bag.extend(bag2)
+        if bag.has_errors() or upto < 3:
+            return bag, workflow
+    except NotImplementedError:
+        pass
+
+    # --- Parser / Builder: dict -> Workflow IR (Dev A) ---
+    try:
+        from yeet.parser.builder import build_workflow
+
+        workflow = build_workflow(data, path, bag)
+    except (NotImplementedError, Exception):
+        workflow = None
+
+    if workflow is None or upto < 3:
+        return bag, workflow
+
+    # --- Layer 3: Semantic validation (Dev B) ---
+    from yeet.validation import layer3_semantic
+
+    try:
+        bag3 = layer3_semantic.check(workflow)
+        bag.extend(bag3)
+        if bag.has_errors() or upto < 4:
+            return bag, workflow
+    except NotImplementedError:
+        pass
+
+    # --- Layer 4: Lint / Code standards (Dev D) ---
+    try:
+        from yeet.core.config import load_lint_config
+        from yeet.validation.layer4_lint.base import run_lints
+
+        cfg = load_lint_config(path.parent)
+        bag4 = run_lints(workflow, path, cfg)
+        bag.extend(bag4)
+    except (NotImplementedError, ImportError):
+        pass
+
+    return bag, workflow

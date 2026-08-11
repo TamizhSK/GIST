@@ -104,12 +104,308 @@ The executor itself doesn't need any of them: core/ir.py and planner/plan.py's d
 One correction to something in your summary: yeet run in a bare repo exits 1, not the sanctioned-red failure — it's EXIT_NOT_READY, deliberately not EXIT_JOB_FAILED (nothing ran) and not EXIT_BAD_WORKFLOW (the file may be fine). That distinction matters if anyone wires the exit code into a hook before the pipeline is complete.
 
 
+# session-2
+
+1. Reporting Subsystem (reporting/)
+
+
+theme.py
+ — Defined status vocabulary (slayed, flopped, cooked, mid, skipped), ANSI color helpers, and NO_COLOR / TTY detection.
+
+
+render.py
+ — Implemented the rustc/eslint style code-frame error renderer (context lines, right-aligned line numbers, caret underlines, help/note formatting, and try/except crash protection).
+
+
+console.py
+ — Implemented RunConsole log sink for live formatted tree rendering and ::group:: section folding.
+
+
+json_out.py
+ — Implemented --format json diagnostic serializer.
+
+
+sarif.py
+ — Implemented --format sarif SARIF 2.1.0 exporter for IDE inline diagnostic visualization.
+🔍 2. Validation & Linter Subsystem (validation/)
+
+
+layer0_file.py
+ — Implemented Layer 0 checks for missing files (E001), empty files (E002), non-UTF-8 bytes (E003), BOM markers (W004), tab indentation (E005), CRLF line endings (W006), and file size > 1MB (W007).
+
+
+pipeline.py
+ — Implemented validate_file() driving Layers 0 → 1 → 2 → 3 → 4 sequentially, stopping between layers on error.
+
+
+base.py
+ — Implemented Layer 4 linter runner with .yeet/lint.yml severity overrides (error, warning, info, off).
+
+
+naming.py
+ — Added lint rules for missing workflow/step names (W401) and zero-step jobs (W413).
+
+
+pinning.py
+ — Added lint rules for action moving refs (@main/@v1) (W402), :latest container tags (W403), and deprecated ::set-output commands (W411).
+
+
+secrets_scan.py
+ — Added hardcoded secrets scanner (W404) matching AWS/GitHub token patterns + Shannon entropy analysis (> 4.0 bits/char) while ignoring ${{ secrets.X }}.
+
+
+shell.py
+ — Added shell safety lints for set -euo pipefail headers (W405), step length > 50 lines (W406), and deploy continue-on-error (W408).
+
+
+portability.py
+ — Added absolute host path detector (W409) for /home/, /Users/, C:\.
+⚙️ 3. Core & Configuration (core/)
+
+
+codes.py
+ — Updated diagnostic rule registry with all 40+ error, warning, and info codes.
+
+
+config.py
+ — Added cross-platform config/cache directory resolution (platformdirs) and .yeet/lint.yml parser.
+📁 4. Storage, Secrets & Triggers
+
+
+store.py
+ — Implemented local secrets store handling .yeet/.secrets, .env, and CLI --secret overrides.
+
+
+runs.py
+ — Implemented JSONL log persistence (RunStore) and replay() log iterator.
+
+
+artifacts.py
+ — Implemented artifact storage under .yeet/artifacts/<run-id>/<name>/.
+
+
+cache.py
+ — Implemented tarball caching with SHA256 key hashing and restore-keys prefix matching.
+
+
+watcher.py
+ — Implemented 500ms debounced file watcher daemon loop.
+
+
+hooks.py
+ — Implemented Git post-commit and pre-push hook installer/uninstaller.
+💻 5. CLI Commands (cli/)
+
+
+cmd_check.py
+ — Wired yeet check to 5-layer pipeline with --strict and --format pretty|json|sarif.
+
+
+cmd_explain.py
+ — Wired yeet explain <CODE> to look up diagnostic rules.
+
+
+cmd_secrets.py
+ — Wired yeet secrets set, list, rm.
+
+
+cmd_logs.py
+ — Wired yeet logs [run_id] to replay past run JSONL events.
+
+
+cmd_watch.py
+ — Wired yeet watch daemon command.
+
+
+cmd_hooks.py
+ — Wired yeet hooks install / uninstall.
+📚 6. Documentation & ADRs
+
+
+gen_rules_doc.py
+ — Created automated script generating markdown docs from codes.py.
+
+
+rules.md
+ — Generated diagnostic rules index document.
+
+
+docs/adr/
+ — Created ADRs 0002 to 0006 covering architecture choices.
+🧪 7. Unit Tests (tests/unit/)
+
+
+test_masking.py
+ — Tests secret masking and base64/URL variants.
+
+
+test_render.py
+ — Tests code-frame error renderer and out-of-bounds line handling.
+
+
+test_reporting.py
+ — Tests RunConsole, JSON exporter, and SARIF exporter.
+
+
+test_layer0_file.py
+ — Tests Layer 0 file syntax & encoding rules.
+
+
+test_lint.py
+ — Tests Layer 4 lints and .yeet/lint.yml severity overrides.
+
+ Key Components Delivered
+Secret Masking Tests (D2)
+
+Created 
+
+test_masking.py
+ verifying raw secrets, base64 variants, urlsafe base64, URL-encoded parameters, and minimum length thresholds.
+Reporting Layer & Code-Frame Renderer (D4 & D5)
+
+Theme & Colors (
+
+theme.py
+): Status vocabulary (slayed, flopped, mid, cooked, skipped (not the vibe)), ANSI color codes, and NO_COLOR / TTY checking.
+Code-Frame Renderer (
+
+render.py
+): rustc/eslint style error reporter with 2 context lines above, 1 below, gutter line numbers, underline carets (^), and index-clamping crash protection.
+Tests created in 
+
+test_render.py
+.
+Console Log Sink & Exporters (D6 & D7)
+
+RunConsole Log Sink (
+
+console.py
+): Implements LogSink with collapsible ::group:: sections.
+JSON Output (
+
+json_out.py
+): --format json output.
+SARIF Output (
+
+sarif.py
+): SARIF 2.1.0 JSON format for IDE/VS Code viewers.
+Tests created in 
+
+test_reporting.py
+.
+Layer 0 Checks & Validation Pipeline (D9 & D8)
+
+Layer 0 File Validator (
+
+layer0_file.py
+): Validates file accessibility (E001), empty files (E002), non-UTF-8 bytes (E003), BOM headers (W004), tabs for indentation (E005), CRLF line endings (W006), and size > 1MB (W007).
+Validation Pipeline (
+
+pipeline.py
+): validate_file() sequential 5-layer validator.
+Tests created in 
+
+test_layer0_file.py
+.
+Core Config & Layer 4 Lint Rules (D10, D11–D16)
+
+Core Config (
+
+config.py
+): Platform path directory resolution and .yeet/lint.yml severity overrides loader.
+Lint Runner (
+
+base.py
+): Multi-rule engine with severity overrides.
+Lint Rules:
+
+
+naming.py
+ (W401, W413)
+
+
+pinning.py
+ (W402, W403, W411)
+
+
+secrets_scan.py
+ (W404 — regex pattern matching + Shannon entropy calculation > 4.0 bits/char)
+
+
+shell.py
+ (W405, W406, W408)
+
+
+portability.py
+ (W409)
+Tests created in 
+
+test_lint.py
+.
+Rule Code Registry & Documentation Generator (D17 & D18)
+
+Updated 
+
+codes.py
+ with all 40+ diagnostic rules.
+Created 
+
+gen_rules_doc.py
+ generator script and generated 
+
+rules.md
+.
+Secrets Store, Storage, Triggers & CLI Commands (D19–D27, D29)
+
+CLI Commands: 
+
+cmd_check.py
+, 
+
+cmd_explain.py
+, 
+
+cmd_secrets.py
+, 
+
+cmd_logs.py
+, 
+
+cmd_watch.py
+, 
+
+cmd_hooks.py
+.
+Storage & Triggers: Local secrets store (
+
+store.py
+), JSONL run store (
+
+runs.py
+), artifact manager (
+
+artifacts.py
+), build cache (
+
+cache.py
+), file watcher (
+
+watcher.py
+), git hook installer (
+
+hooks.py
+).
+Architecture Decision Records: Created ADRs 0002 through 0006 in 
+
+docs/adr/
+.
 
 
 
 
 
-# session-3 
+# session-3
+
 
 Here's the per-item context for Dev A's plan, A3–A20:
 A3 — analyzer/root.py: Walk up from the start dir for .git/ → .yeet/ → .github/workflows/ → ecosystem marker; highest priority wins; stops at FS root or $HOME; never shells out to git. ✓ Implemented. Tests added this session: git repo, bare dir, nested subdir, $HOME boundary (incl. a marker found from below home).
