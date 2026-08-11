@@ -145,6 +145,7 @@ def _contexts(root: Path, event: str) -> Contexts:
     walking skeleton meaningful before B5 lands.
     """
     contexts = Contexts(env=dict(os.environ))
+    contexts.root = root
     try:
         contexts.github = dict(build_github_context(root, event))
     except NotImplementedError:

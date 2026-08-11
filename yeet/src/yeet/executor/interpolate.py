@@ -26,6 +26,7 @@ import re
 
 from yeet.expressions.contexts import Contexts
 from yeet.expressions.evaluator import evaluate
+from yeet.expressions.evaluator import truthy as evaluate_truthy
 from yeet.expressions.parser import parse
 
 EXPR = re.compile(r"\$\{\{(?P<body>.*?)\}\}", re.DOTALL)
@@ -99,7 +100,7 @@ def truthy(expr: str | None, ctx: Contexts | None, degraded: Degradation) -> boo
         degraded.note()
         return True
     try:
-        return _truth(evaluate(parse(body), ctx))
+        return evaluate_truthy(evaluate(parse(body), ctx))
     except NotImplementedError:
         degraded.note()
         return True
@@ -113,10 +114,3 @@ def _stringify(value: object) -> str:
     if value is None:
         return ""
     return str(value)
-
-
-def _truth(value: object) -> bool:
-    """GitHub's rule: empty string, 0, null and false are falsey."""
-    if isinstance(value, str):
-        return value.strip().lower() not in ("", "false", "0")
-    return bool(value)

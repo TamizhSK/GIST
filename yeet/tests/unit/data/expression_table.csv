@@ -1,0 +1,47 @@
+expr,context,expected
+1,{},1
+'hi',{},"""hi"""
+null,{},null
+true,{},true
+github.sha,"{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}","""abc123"""
+github.event_name,"{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}","""push"""
+github.event.pull_request.number,"{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}",5
+github.event.pull_request.labels[0].name,"{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}","""bug"""
+github['event_name'],"{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}","""push"""
+matrix.node,"{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}",18
+matrix.os,"{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}","""ubuntu-latest"""
+env.FOO,"{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}","""bar"""
+needs.build.result,"{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}","""success"""
+steps.test.outputs.count,"{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}","""3"""
+inputs.name,"{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}","""Mona"""
+vars.DEPLOY,"{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}","""true"""
+'15' < '9',{},true
+'10' < '9',{},true
+'5' > '10',{},true
+5 > 10,{},false
+10 >= 10,{},true
+'a' == 'a',{},true
+'A' == 'a',{},true
+1 == '1',{},true
+null == 0,{},true
+false && 2 || 3,{},3
+!false,{},true
+!null,{},true
+!0,{},true
+!'',{},true
+!'false',{},false
+"contains('Hello World', 'world')",{},true
+"contains('Hello World', 'moon')",{},false
+"startsWith('hello', 'HE')",{},true
+"endsWith('hello', 'LO')",{},true
+"format('Hello {0} {1}', 'Mona', 'the Octocat')",{},"""Hello Mona the Octocat"""
+"join(github.event.pull_request.labels.*.name, ', ')","{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}","""bug, ui"""
+toJSON(github.event_name),"{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}","""\""push\"""""
+"fromJSON('[1, 2, 3]')[1]",{},2
+"fromJSON('{""a"": 1}').a",{},1
+success(),"{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}",true
+always(),{},true
+cancelled(),{},false
+failure(),{},false
+!(1 > 2),{},true
+github.event.pull_request.labels.*.name,"{""github"":{""sha"":""abc123"",""event_name"":""push"",""event"":{""pull_request"":{""number"":5,""labels"":[{""name"":""bug""},{""name"":""ui""}]}},""head_commit"":{""message"":""fix: run ci""}},""matrix"":{""node"":18,""os"":""ubuntu-latest""},""env"":{""FOO"":""bar""},""needs"":{""build"":{""result"":""success""},""lint"":{""result"":""success""}},""steps"":{""test"":{""outputs"":{""count"":""3""}}},""job"":{""status"":""success""},""inputs"":{""name"":""Mona""},""vars"":{""DEPLOY"":""true""}}","[""bug"", ""ui""]"

@@ -9,9 +9,10 @@ from __future__ import annotations
 import threading
 import time
 
-from conftest import make_instance, make_job, make_matrix, make_step
+from conftest import POS, make_instance, make_job, make_matrix, make_step
 
 from yeet.core.events import ListSink
+from yeet.core.ir import Strategy
 from yeet.core.result import JobResult, Status
 from yeet.executor.backend import JobContext
 from yeet.executor.runner import RunOptions, run_plan
@@ -157,6 +158,65 @@ def test_matrix_legs_map_back_to_their_job_for_needs(tmp_path):
     run_plan(ExecutionPlan(waves=[legs, [deploy]]), backend, options(tmp_path))
 
     assert set(backend.contexts["deploy"].needs) == {"build (node 18)", "build (node 20)"}
+
+
+def test_fail_fast_cancels_sibling_matrix_legs(tmp_path):
+    """fail-fast on: the first failing leg cancels queued siblings of the same job."""
+    job = make_job("build", [make_step("x")], strategy=make_matrix(node=[18, 20]))
+    fast = make_instance(job, key="build (node 18)", leg={"node": 18})
+    slow = make_instance(job, key="build (node 20)", leg={"node": 20})
+    backend = FakeBackend({"build (node 18)": Status.FAILURE})
+    sink = ListSink()
+
+    result = run_plan(
+        ExecutionPlan(waves=[[fast, slow]]), backend, options(tmp_path, sink=sink, max_workers=1)
+    )
+
+    assert backend.seen == ["build (node 18)"], "the sibling must never have started"
+    statuses = {job.job_key: job.status for job in result.jobs}
+    assert statuses == {"build (node 18)": Status.FAILURE, "build (node 20)": Status.SKIPPED}
+    assert "cancelled (fail-fast)" in sink.text()
+    assert result.exit_code == 1
+
+
+def test_fail_fast_off_lets_siblings_run(tmp_path):
+    job = make_job(
+        "build",
+        [make_step("x")],
+        strategy=Strategy(pos=POS, matrix={"node": [18, 20]}, fail_fast=False),
+    )
+    fast = make_instance(job, key="build (node 18)", leg={"node": 18})
+    slow = make_instance(job, key="build (node 20)", leg={"node": 20})
+    backend = FakeBackend({"build (node 18)": Status.FAILURE})
+
+    result = run_plan(
+        ExecutionPlan(waves=[[fast, slow]]), backend, options(tmp_path, max_workers=1)
+    )
+
+    assert backend.seen == ["build (node 18)", "build (node 20)"]
+    statuses = {job.job_key: job.status for job in result.jobs}
+    assert statuses == {"build (node 18)": Status.FAILURE, "build (node 20)": Status.SUCCESS}
+
+
+def test_fail_fast_only_cancels_siblings_of_the_same_job(tmp_path):
+    build = make_job("build", [make_step("x")], strategy=make_matrix(node=[18, 20]))
+    lint = make_job("lint", [make_step("x")], strategy=make_matrix(node=[18]))
+    fast = make_instance(build, key="build (node 18)", leg={"node": 18})
+    slow = make_instance(build, key="build (node 20)", leg={"node": 20})
+    lint_inst = make_instance(lint, key="lint (node 18)", leg={"node": 18})
+    backend = FakeBackend({"build (node 18)": Status.FAILURE})
+
+    result = run_plan(
+        ExecutionPlan(waves=[[fast, slow, lint_inst]]), backend, options(tmp_path, max_workers=1)
+    )
+
+    statuses = {job.job_key: job.status for job in result.jobs}
+    assert statuses == {
+        "build (node 18)": Status.FAILURE,
+        "build (node 20)": Status.SKIPPED,
+        "lint (node 18)": Status.SUCCESS,
+    }
+    assert backend.seen == ["build (node 18)", "lint (node 18)"]
 
 
 def test_a_backend_that_raises_becomes_a_failed_job(tmp_path):
