@@ -68,7 +68,7 @@ class Masker:
     @staticmethod
     def _variants(value: str) -> list[str]:
         raw = value.strip()
-        if not raw:
+        if not raw or len(raw) < MIN_LENGTH:
             return []
         encoded = raw.encode("utf-8", errors="replace")
         b64 = base64.b64encode(encoded).decode("ascii")
