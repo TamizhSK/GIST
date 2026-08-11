@@ -1,6 +1,6 @@
 # Run `make check` before every push. It is the same set CI runs, so a green
 # local run means a green PR — that is the whole point of it being ten lines.
-.PHONY: check lint fmt imports types test docker rules all
+.PHONY: check lint fmt imports types test docker image rules all
 
 check: lint imports types test
 
@@ -22,6 +22,9 @@ test:               ## fast loop — run this constantly
 
 docker:             ## needs the daemon
 	pytest -m docker -q
+
+image:              ## build the base image every `cooked_on: ubuntu-latest` job runs in
+	docker build -f Dockerfile.base -t yeet/ubuntu:22.04 .
 
 rules:              ## regenerate docs/rules.md from core/codes.py — never hand-edit it
 	@test -f tools/gen_rules_doc.py || { \

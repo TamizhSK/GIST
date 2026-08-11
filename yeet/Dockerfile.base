@@ -1,0 +1,43 @@
+# The base image every `cooked_on: ubuntu-latest` job runs in.
+#
+# Build it once:   make image
+# It is tagged     yeet/ubuntu:22.04
+#
+# Why this file exists at all: `ubuntu:22.04` ships with no git, no curl and no
+# node. A workflow that checks out code or installs dependencies fails inside
+# it with an error that points nowhere near the real cause, and the user
+# concludes our runner is broken. Trap #3 on the guide's list.
+#
+# Keep it boring. Every tool added here is one that every job pays for on first
+# build, and anything version-specific belongs in the workflow, not in here.
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      git \
+      jq \
+      unzip \
+      build-essential \
+      python3 \
+      python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node 20 from NodeSource — the ubuntu repo ships a version old enough that
+# `npm ci` fails on most modern lockfiles.
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# The bind mount target. Created here so the directory exists even when a job
+# runs before anything is mounted (an image-only smoke test, for instance).
+WORKDIR /workspace
+
+# A login shell would source /etc/profile and clobber the PATH we assemble from
+# $GITHUB_PATH between steps. Step scripts are invoked explicitly as
+# `bash -e -o pipefail <script>`, so this is only the interactive default.
+CMD ["bash"]

@@ -20,6 +20,7 @@ from yeet.cli import (
     cmd_hooks,
     cmd_init,
     cmd_logs,
+    cmd_prune,
     cmd_run,
     cmd_scan,
     cmd_secrets,
@@ -41,6 +42,7 @@ app.command("run")(cmd_run.run)
 app.command("graph")(cmd_graph.graph)
 app.command("logs")(cmd_logs.logs)
 app.command("watch")(cmd_watch.watch)
+app.command("prune")(cmd_prune.prune)
 app.add_typer(cmd_hooks.hooks_app, name="hooks")
 app.add_typer(cmd_secrets.secrets_app, name="secrets")
 # ----------------------------------------------------------------------------

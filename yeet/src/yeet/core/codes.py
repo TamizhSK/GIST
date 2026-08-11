@@ -56,6 +56,11 @@ RULES: dict[str, Rule] = {
         _e("E301", "`needs` references an unknown job", 3),
         _e("E302", "dependency cycle", 3),
         _e("E309", "expression fails to parse", 3),
+        # Fires from executor/images.py rather than layer 3: resolution needs
+        # the image table, which is tier 5, and validation is tier 3. The gate
+        # still holds — it just holds before the container is created rather
+        # than during `check`. See executor/images.py.
+        _e("E315", "`cooked_on:` could not be resolved to an image", 3),
         # Layer 4 — lint / standards
         _w("W401", "missing name", 4),
         _w("W402", "action pinned to a moving ref", 4),
