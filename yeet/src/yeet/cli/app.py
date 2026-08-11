@@ -10,6 +10,10 @@ See docs/architecture.md
 
 from __future__ import annotations
 
+import contextlib
+import io
+import sys
+
 import typer
 
 from yeet import __version__
@@ -50,14 +54,23 @@ app.add_typer(cmd_secrets.secrets_app, name="secrets")
 
 @app.callback(invoke_without_command=True)
 def _root(
+    ctx: typer.Context,
     version: bool = typer.Option(False, "--version", help="Print the version and exit."),
+    no_color: bool = typer.Option(
+        False, "--no-color", help="Disable colored output. NO_COLOR is honored too."
+    ),
 ) -> None:
     if version:
         typer.echo(f"yeet {__version__}")
         raise typer.Exit(0)
+    ctx.obj = {"no_color": no_color}
 
 
 def main() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            with contextlib.suppress(OSError):
+                stream.reconfigure(encoding="utf-8", errors="replace")
     app()
 
 

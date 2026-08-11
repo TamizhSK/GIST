@@ -1,0 +1,6 @@
+on: push
+jobs:
+  build:
+    steps:
+      - run: "echo hi"
+        uses: "./.yeet/actions/checkout"

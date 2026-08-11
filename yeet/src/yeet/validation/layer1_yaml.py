@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from yeet.core.diagnostics import DiagnosticBag
+from yeet.parser.loader import load_with_positions
 
 
 def check(path: Path) -> tuple[DiagnosticBag, Any | None]:
@@ -20,5 +21,12 @@ def check(path: Path) -> tuple[DiagnosticBag, Any | None]:
     booleans, so `on:` arrives as the key `True`. GitHub tolerates it and so
     must we — normalize the key back to "on" and warn. Same trap turns a branch
     named `no` into `False` (the Norway problem).
+
+    This layer is a thin wrapper: all of the logic lives in
+    `yeet.parser.loader.load_with_positions` (A10), which owns the ruamel
+    round-trip loader and position extraction. The wrapper exists so the
+    pipeline (Dev D) can call every layer with the same `check(path)` shape.
     """
-    raise NotImplementedError
+    bag = DiagnosticBag()
+    tree = load_with_positions(path, bag)
+    return bag, tree

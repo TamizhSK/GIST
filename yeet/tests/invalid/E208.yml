@@ -1,0 +1,5 @@
+on: [qwerty]
+jobs:
+  build:
+    steps:
+      - run: "echo hi"

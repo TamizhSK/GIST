@@ -1,0 +1,19 @@
+name: options
+on: push
+defaults:
+  run:
+    shell: bash
+    working-directory: ./scripts
+  strategy:
+    max-parallel: 2
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+      - name: cautious
+        run: echo bye
+        shell: pwsh
+        working-directory: .
+        continue-on-error: true
+        timeout-minutes: 5

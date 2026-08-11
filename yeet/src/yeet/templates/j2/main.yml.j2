@@ -1,0 +1,27 @@
+vibe: "{{ name }}"
+when:
+  push:
+    branches:
+      - main
+  manual:
+
+the_grind:
+{% for job in jobs %}
+  {{ job.key }}:
+    name: "{{ job.label|yq }}"
+{% if job.image %}
+    cooked_on: "{{ job.image|yq }}"
+{% endif %}
+    moves:
+      - yoink: "./.yeet/actions/checkout"
+{% for cmd in job.commands %}
+      - run: "{{ cmd|yq }}"
+{% endfor %}
+{% endfor %}
+{% if dockerfile %}
+  container:
+    name: "build the image"
+    moves:
+      - yoink: "./.yeet/actions/checkout"
+      - run: "docker build -t {{ docker_tag|yq }} ."
+{% endif %}

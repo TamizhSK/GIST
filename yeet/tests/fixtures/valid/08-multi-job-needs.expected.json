@@ -1,0 +1,110 @@
+{
+  "defaults": {},
+  "env": {},
+  "jobs": {
+    "deploy": {
+      "container_image": null,
+      "dockerfile": null,
+      "env": {},
+      "if": null,
+      "key": "deploy",
+      "name": null,
+      "needs": [
+        "test"
+      ],
+      "outputs": {},
+      "runs_on": "ubuntu-latest",
+      "steps": [
+        {
+          "continue_on_error": false,
+          "env": {},
+          "id": null,
+          "if": null,
+          "name": null,
+          "run": "npm run deploy",
+          "shell": null,
+          "timeout_minutes": null,
+          "uses": null,
+          "with": {},
+          "working_directory": null
+        }
+      ],
+      "strategy": null,
+      "timeout_minutes": null
+    },
+    "lint": {
+      "container_image": null,
+      "dockerfile": null,
+      "env": {},
+      "if": null,
+      "key": "lint",
+      "name": null,
+      "needs": [],
+      "outputs": {},
+      "runs_on": "ubuntu-latest",
+      "steps": [
+        {
+          "continue_on_error": false,
+          "env": {},
+          "id": null,
+          "if": null,
+          "name": null,
+          "run": "npm run lint",
+          "shell": null,
+          "timeout_minutes": null,
+          "uses": null,
+          "with": {},
+          "working_directory": null
+        }
+      ],
+      "strategy": null,
+      "timeout_minutes": null
+    },
+    "test": {
+      "container_image": null,
+      "dockerfile": null,
+      "env": {},
+      "if": "github.ref == 'refs/heads/main'",
+      "key": "test",
+      "name": "unit tests",
+      "needs": [
+        "lint"
+      ],
+      "outputs": {},
+      "runs_on": "ubuntu-latest",
+      "steps": [
+        {
+          "continue_on_error": false,
+          "env": {},
+          "id": null,
+          "if": null,
+          "name": null,
+          "run": "npm test",
+          "shell": null,
+          "timeout_minutes": null,
+          "uses": null,
+          "with": {},
+          "working_directory": null
+        }
+      ],
+      "strategy": null,
+      "timeout_minutes": null
+    }
+  },
+  "name": "pipeline",
+  "triggers": [
+    {
+      "event": "push",
+      "filters": {
+        "branches": [
+          "main"
+        ]
+      }
+    },
+    {
+      "event": "workflow_dispatch",
+      "filters": {}
+    }
+  ],
+  "used_dialect": false
+}

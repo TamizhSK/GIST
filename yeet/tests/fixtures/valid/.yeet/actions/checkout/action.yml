@@ -1,0 +1,15 @@
+name: "git clone"
+description: "clone a repo"
+inputs:
+  repo:
+    description: "repo to clone"
+    required: true
+  depth:
+    description: "shallow clone depth"
+    default: "0"
+runs:
+  using: composite
+  steps:
+    - name: "clone it"
+      run: "git clone --depth ${{ inputs.depth }} ${{ inputs.repo }}"
+      shell: bash

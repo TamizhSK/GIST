@@ -1,0 +1,13 @@
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CI: "true"
+    steps:
+      - id: gen
+        run: echo "x=1" >> "$GITHUB_OUTPUT"
+      - run: echo "got ${{ steps.gen.outputs.x }}"
+        if: always()
+      - run: echo skipped normally
+        if: ${{ !cancelled() }}
