@@ -427,3 +427,34 @@ A18 — templates/ + cmd_init.py: Jinja2 per-ecosystem templates, init --auto fr
 A19 — demo ./.yeet/actions/checkout/: Ship your own composite so the demo has zero external deps. ✓ Present at .yeet/actions/checkout/action.yml; also reused as the A17 golden fixture. Offline run still needs Dev C's executor wiring.
 A20 — actions/resolver.py remote (stretch): owner/repo@ref → shallow git clone --depth 1 into ~/.yeet/actions/, cached by ref, failed clone = E313. ✓ Implemented with a test double for git_clone; unit-tested (resolve, cache hit skips clone, refs distinct, E313).
 Blockers (external, not Dev A's code): yeet check/per-flow validity/offline run depend on Dev D's pipeline.validate_file and Dev C's executor, both still stubs. Net: 224 passed, 37 skipped.
+
+
+
+# session-4
+
+
+Dev B — Expressions, Planner, Semantic validation (summary vs. plan)
+Status: complete and green — ruff clean, mypy (99 files) clean, 511 passed, 18 skipped, 18 deselected, import-linter 2 contracts kept.
+#	Plan says	Status	What's actually there
+B1	§2.3 contract rejects sibling imports	✅ done pre-session	Output in docs/adr/0007
+B1b	core/graph.py signatures, find_cycle + topo_waves	✅ done (impl = B8)	planner/graph.py adapter untouched
+B2	expressions/lexer.py tokenizer, byte offsets	✅	~40 token-stream parametrized tests (test_lexer.py)
+B3	expressions/ast_nodes.py (9 node types + ExprSyntaxError)	✅ pre-existing	—
+B4	expressions/parser.py Pratt parser, ExprSyntaxError(offset,msg)	✅	precedence table + malformed-input tests; ~260 lines
+B5	expressions/contexts.py, 11 contexts, build_github_context	✅	resolves in real git repo (test_contexts.py)
+B6	expressions/evaluator.py, GitHub loose equality	✅	CSV table test §7 passes (test_expression_table.py, 46 rows)
+B7	expressions/functions.py (12 fns), hashFiles sorts paths	✅	cross-platform determinism + order-independence tests (test_functions.py:164-212)
+B8	core/graph.py impl	✅	cycle, diamond, single-job tests (test_graph.py)
+B9	validation/layer3_semantic.py	✅ partial by design	E301, E302 (uses core.graph.find_cycle), E303, E309, E310, E311, E312 shipped + 21 tests. E304–E308, E313–E317, W318 left for other owners (noted in module docstring)
+B10	planner/matrix.py — product, then include, then exclude	✅ deviation	Implemented GitHub's real order: product → exclude → include (docs order, not plan order — include can resurrect excluded legs). Include merges into legs it doesn't overwrite (checked vs original product values). Exact docs 6-leg output asserted (test_matrix.py, 11 tests)
+B11	planner/plan.py build_plan(): matrix → DAG → topo waves; "evaluate job-level if: here"	✅ deviation	Matrix expansion + instance DAG + topo_waves into ExecutionPlan(waves). Job-level if: is not evaluated at plan time — it's runtime (Dev C runner); planner is purely structural (test_plan.py, 13 tests)
+B12	cli/cmd_graph.py ASCII DAG render	✅	render_plan() pure + _flows() own discovery; smoke-tested (test_cmd_graph.py, 6 tests)
+B13	skip semantics: failed needs → SKIPPED unless always()/failure(); fail-fast cancels siblings. "Lives in plan.py"	✅ deviation	Lives in executor/runner.py (Dev C tier-5): _blocking_failure, _wants_to_run_regardless (textual marker match), _collect fail-fast cancellation. Planner contributes nothing. 3 focused fail-fast tests added this session
+Deliberate deviations from the written plan (all documented in code)
+1. B10 matrix order — plan says include then exclude; GitHub actually does exclude first. The module header ("include AFTER exclude") and the current GitHub docs (6-leg example) agree, and the implementation asserts the exact documented output.
+2. B11 if: evaluation — deferred to runtime; the runner's textual always()/failure()/cancelled() check needs upstream results that don't exist at plan time.
+3. B13 location — skip/fail-fast landed in runner.py, not plan.py, because the decision needs runtime facts (module docstring lines 10-13 say so explicitly).
+Delivered this session
+B10 (planner/matrix.py + 11 tests) → B11 (planner/plan.py + 13 tests) → B9 (layer3_semantic.py + 21 tests, E301/E302/E303/E309/E310/E311/E312) → CSV engine table (46 rows) → B12 (cmd_graph.py + 6 tests) → full make check gate → 3 fail-fast tests (B13 coverage).
+Outstanding hand-offs
+Dev A: parser/builder.py, analyzer/ (stubs block yeet graph full render — currently degrades to "parser is not ready"), suggest.did_you_mean (A15, for E301). Dev C: remove Degradation machinery in interpolate.py. Dev D: remaining L3 codes E304–E308/E313–E317/W318.
