@@ -158,7 +158,12 @@ def _pid_alive_windows(pid: int) -> bool:
     process_query_limited_information = 0x1000
     still_active = 259
 
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    # `getattr` rather than `ctypes.windll.kernel32`: the attribute only exists
+    # on Windows, so a direct reference needs `# type: ignore[attr-defined]`
+    # off Windows and mypy then rejects that same ignore ON Windows as unused
+    # (`warn_unused_ignores`). One spelling cannot satisfy a strict run on both,
+    # and CI type-checks on all three. This needs no ignore anywhere.
+    kernel32 = getattr(ctypes, "windll").kernel32  # noqa: B009
     handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
     if not handle:
         return False
