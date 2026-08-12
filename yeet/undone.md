@@ -402,3 +402,50 @@ C's assigned work is complete: contexts (s6), plus the Windows shell pair.
 Remaining C items are C15/C16 — `actions/docker_action.py` and `js_action.py`
 are still empty files — and the executor half of `loot:`/`stash:`, which is
 blocked on Dev A adding the IR fields and schema keys first.
+
+## session-6c — three-OS CI is green
+
+`shell: bash` on Windows reached `C:\Windows\System32\bash.exe`, which is the
+WSL launcher rather than a shell; with no distribution installed it fails with
+a message about Linux distributions. `platform_.shell_executable()` now
+resolves bash/sh to Git for Windows. No-op elsewhere and inside containers.
+
+With that fixed, all 660 Windows tests PASSED and the step still exited 1: the
+session died with a KeyboardInterrupt during `test_watcher.py`. Cause:
+`ProjectLock` asked `os.kill(pid, 0)` whether a lock holder was alive. On
+Windows CPython special-cases only CTRL_C_EVENT and CTRL_BREAK_EVENT and
+otherwise calls `TerminateProcess`, so signal 0 **kills** the target. The lock
+test writes `os.getppid()` as a stand-in live holder, so probing it terminated
+the pwsh process running the CI step. **Not only a test bug** — a stale
+`watch.lock` with a recycled pid would have killed an unrelated program on a
+user's machine. `platform_.pid_alive()` now owns it: `OpenProcess` +
+`GetExitCodeProcess` on Windows, `os.kill(pid, 0)` elsewhere.
+
+Then mypy: `ctypes.windll` needs `# type: ignore[attr-defined]` off Windows,
+and `warn_unused_ignores` rejects that same ignore ON Windows. No spelling with
+an ignore is green on all three; `getattr(ctypes, "windll")` needs none.
+
+Smaller items in the same pass: `script_suffix` gained a required
+`in_container` keyword (see 6b); `script.py` calls `platform_.is_windows()`
+through the module so the platform decision has ONE patch point (tests had been
+patching `script.is_windows` while `shell_executable` read
+`platform_.is_windows`); e2e fixtures are written `newline="\n"` so the same
+fixture is the same bytes on every OS.
+
+### Result
+
+    CI run 31628874225 — all 8 jobs green, the first time in the project's life
+
+    check (ubuntu-latest, 3.11)   check (ubuntu-latest, 3.12)
+    check (macos-latest, 3.11)    check (macos-latest, 3.12)
+    check (windows-latest, 3.11)  check (windows-latest, 3.12)
+    docker                        rules-doc
+
+695 tests locally, 18 container tests against a live daemon.
+
+The lesson worth keeping: **every Windows bug in this sequence was a function
+that behaves differently there and was called as if it did not** — `os.kill`
+probes on POSIX and kills on Windows; `bash` is a shell on POSIX and a WSL
+launcher on Windows; `text=True` decodes UTF-8 on POSIX and cp1252 on Windows;
+`write_text` writes LF on POSIX and CRLF on Windows. Four instances of one
+shape, and CI found all four in a single afternoon after never having run.
