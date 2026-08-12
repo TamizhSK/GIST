@@ -28,7 +28,9 @@ from pathlib import Path
 from yeet.core.events import META, LogEvent, LogSink
 from yeet.core.masking import Masker
 from yeet.core.result import JobResult, RunResult, Status, StepResult
+from yeet.executor import env as env_mod
 from yeet.executor.backend import Backend, JobContext
+from yeet.executor.contexts import for_instance
 from yeet.executor.steps import label
 from yeet.executor.workspace import RunLayout, create
 from yeet.expressions.contexts import Contexts
@@ -51,6 +53,11 @@ class RunOptions:
     event: str = "push"
     max_workers: int | None = None
     env: dict[str, str] = field(default_factory=dict)
+    workflow_env: dict[str, str] = field(default_factory=dict)
+    """Workflow-level `env:` / `drip:`. It reached the IR and stopped there —
+    `steps._step_env` layers base < exported < job < step and never saw the
+    workflow block at all, so a variable declared once at the top of a file was
+    invisible to every step under it."""
     masker: Masker = field(default_factory=Masker)
     sink: LogSink | None = None
     contexts: Contexts | None = None
@@ -88,6 +95,7 @@ def run_plan(plan: ExecutionPlan, backend: Backend, options: RunOptions) -> RunR
     exception. Only a broken *tool* raises out of here.
     """
     layout = options.layout or create(options.root, options.run_id or None)
+    _align_github_context(options, layout)
     started = time.monotonic()
     state = _State()
 
@@ -121,19 +129,59 @@ def _run_wave(
             _note(options, inst.key, f"skipped (not the vibe): {blocked}")
             continue
 
+        # Per INSTANCE, not per run. `Contexts` is mutable and the jobs of a
+        # wave run in parallel, so a shared object would let one leg read
+        # another leg's matrix values. `for_instance` returns a fresh snapshot.
+        contexts = for_instance(options.contexts, inst, upstream, state.job_of)
+
         ctx = JobContext(
             workspace=options.root,
-            env=dict(options.env),
+            env=_job_env(options, contexts),
             secrets=options.masker,
             sink=options.sink,
             needs=upstream,
             event=options.event,
-            contexts=options.contexts,
+            contexts=contexts,
             run_id=layout.run_id,
         )
         futures[pool.submit(backend.run_job, inst, ctx)] = inst
 
     _collect(futures, options, state)
+
+
+def _align_github_context(options: RunOptions, layout: RunLayout) -> None:
+    """Make `${{ github.run_id }}` and `$GITHUB_RUN_ID` the same string.
+
+    `build_github_context` mints a run id of its own when it cannot find one in
+    the environment, and the executor's layout mints another for the log
+    directory. Two ids for one run means `yeet logs <id>` cannot find what the
+    workflow printed. The layout's id is the one on disk, so it wins.
+
+    Safe to mutate here: this runs once, before the pool exists.
+    """
+    if options.contexts is None:
+        return
+    options.contexts.github["run_id"] = layout.run_id
+    options.contexts.github.setdefault("workspace", str(options.root))
+
+
+def _job_env(options: RunOptions, contexts: Contexts | None) -> dict[str, str]:
+    """The env every step of this job starts from, above the backend's base.
+
+    `github_env` finally has a call site — it was written in session 1 against
+    the nine fields `build_github_context` promises and then went four sessions
+    without one, which meant `${{ github.sha }}` resolved while `$GITHUB_SHA`
+    did not. Two spellings of the same fact must not disagree inside one step.
+
+    Workflow-level `env:` goes on top: it is the user's file, and it should win
+    over anything we synthesised for them.
+    """
+    env: dict[str, str] = {}
+    if contexts is not None:
+        env.update(env_mod.github_env(contexts.github))
+    env.update(options.env)
+    env.update(env_mod.stringify_all(options.workflow_env))
+    return env
 
 
 def _collect(

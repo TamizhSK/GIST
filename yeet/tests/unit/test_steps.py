@@ -7,6 +7,7 @@ same loop runs under Docker, so proving it here proves it there.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 
 from conftest import make_instance, make_job, make_step
 
@@ -301,3 +302,46 @@ def test_job_result_reports_failure(tmp_path):
 
     result = build_job_result(config, make_instance(job), results, 0.0)
     assert result.status is Status.FAILURE
+
+
+def test_on_windows_the_script_is_written_where_pwsh_can_run_it(tmp_path, monkeypatch):
+    """The Windows regression, at the call site where it actually lived.
+
+    `steps.py` asked `script_suffix(step.shell)` while `shell_argv` applied the
+    platform default separately, so a step with no `shell:` was written to
+    `script.sh` and invoked as `pwsh -File ...script.sh`. pwsh runs `.ps1` and
+    nothing else, so every job on Windows flopped — the whole windows-latest
+    leg of the project's first CI run.
+
+    Asserts the two agree: the file that exists is the file argv points at, and
+    its extension is one the chosen shell will accept.
+    """
+    from yeet.executor import script as script_mod
+
+    monkeypatch.setattr(script_mod, "is_windows", lambda: True)
+
+    job = make_job(steps=[make_step("echo hi")])
+    config = build_config(tmp_path, job)
+    executor = FakeExec((0, out("hi\n")))
+    run_steps(config, executor)
+
+    argv = executor.requests[0].argv
+    assert argv[0] == "pwsh"
+    assert argv[-1].endswith(".ps1"), argv
+    assert Path(argv[-1]).is_file(), "argv points at a script that was never written"
+
+
+def test_on_posix_the_pair_is_bash_and_sh(tmp_path, monkeypatch):
+    from yeet.executor import script as script_mod
+
+    monkeypatch.setattr(script_mod, "is_windows", lambda: False)
+
+    job = make_job(steps=[make_step("echo hi")])
+    config = build_config(tmp_path, job)
+    executor = FakeExec((0, out("hi\n")))
+    run_steps(config, executor)
+
+    argv = executor.requests[0].argv
+    assert argv[0] == "bash"
+    assert argv[-1].endswith(".sh"), argv
+    assert Path(argv[-1]).is_file()

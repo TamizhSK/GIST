@@ -245,3 +245,160 @@ disk, value absent from the file).
   Everyone: the handbook's rule — when you finish a module, grep for its call site — is the single most valuable
   sentence in your docs, and the matrix bug is the fourth violation of it. Make it a PR checklist item, not a
   paragraph.
+
+
+# session-6 work — DEV-C, the contexts
+
+The bug the session-5 review named as "the nastiest of the set" — a `Contexts`
+field that exists, parses, and is never populated — turned out to have five
+more instances of itself. This session fixed the class, not the instance.
+
+## What was broken
+
+`cmd_run._contexts()` built ONE `Contexts` for the whole run and filled three
+of its ten fields: `github`, `secrets`, `env=os.environ`. That object was
+threaded unchanged through `RunOptions` -> `JobContext` -> `StepLoopConfig` ->
+`expand()`. Everything that varies per job instance or per step was therefore
+permanently empty:
+
+| Context | Symptom |
+|---|---|
+| `matrix` | `${{ matrix.node }}` expanded to `""` in **every leg that has ever run** |
+| `env` | workflow/job/step `env:` invisible to `${{ env.X }}` |
+| `needs` | `needs.build.outputs.*` and `.result` always empty |
+| `steps` | `steps.<id>.outputs.*` always empty, so a job's `outputs:` block was too |
+| `runner` | `${{ runner.os }}` empty |
+| `job` | `${{ job.status }}` empty |
+
+Two more found while fixing it:
+
+- **`Workflow.env` was parsed and dropped on the floor.** `_step_env` layered
+  base < exported < job < step and never looked at the workflow block, so a
+  variable declared once at the top of a file reached nothing beneath it.
+- **`env.py::github_env` still had no call site** (s1 #4, open five sessions):
+  `${{ github.sha }}` resolved while `$GITHUB_SHA` did not.
+
+## What was done
+
+- **NEW `src/yeet/executor/contexts.py`** (tier 5). `for_instance()` builds a
+  per-job-instance `Contexts` (matrix from `inst.leg`, `needs` from upstream
+  `JobResult`s, `job.status`); `for_step()` adds `env`, `runner` and `steps`.
+  Every function **returns a new `Contexts` and never mutates its argument** —
+  jobs in a wave run in parallel threads off one base object, and sharing a
+  mutable one is a race that surfaces as one leg reading another leg's matrix.
+- **`runner.py`** — builds the per-instance contexts in `_run_wave`; new
+  `RunOptions.workflow_env`; `_job_env()` merges `github_env(contexts.github)`
+  into every job's environment; `_align_github_context()` makes
+  `${{ github.run_id }}` and the log directory the same string (they were two
+  different generated ids, so `yeet logs <id>` could not find a run).
+- **`steps.py`** — `_step_contexts()` per step, built BEFORE `if:` is
+  evaluated so a condition can see matrix/needs/steps/env. `_step_env` split
+  into `_layered_env` (feeds the `env` context) and `_with_state_files` (does
+  not — `$GITHUB_ENV` is our scratch file, not the user's variable).
+  `build_job_result` now expands `outputs:` against the post-last-step context.
+- **`RESULT_WORDS`** — expressions speak GitHub's vocabulary (`success`,
+  `failure`, `skipped`, `cancelled`), not the console's (`slayed`, `flopped`).
+  Real workflows are full of `if: needs.build.result == 'success'` and we
+  promise those files run unchanged. `slayed`/`flopped` stay in `reporting/`.
+
+## Verification
+
+Run, not asserted:
+
+    make check      all six gates green
+    pytest          686 passed (was 672: +10 unit, +4 e2e), 18 deselected
+    pytest -m docker  18 passed against a live daemon
+    mypy src        102 files, strict, clean
+    lint-imports    2 contracts kept, 0 broken
+
+Live, on the local backend AND in real containers:
+`matrix`, `env` (all three levels), `needs.<job>.result`/`.outputs`,
+`steps.<id>.outputs`/`.conclusion`, `runner.os`, `job.status`, and
+`${{ github.sha }} == $GITHUB_SHA` all resolve. In a 2-leg matrix each leg
+prints its own value, in parallel containers, and `runner.os` reports `Linux`
+on a macOS host (it is read from the step's own env, so it cannot disagree
+with `$RUNNER_OS`).
+
+**The tripwire was checked by breaking it:** reverting `for_instance` to
+return the shared object fails `test_a_matrix_leg_sees_its_own_value` and
+`test_needs_carries_result_and_outputs_between_jobs`. A test that cannot fail
+is not a tripwire, and the absence of exactly this test is why the bug lived
+through four review sessions with a green suite.
+
+## Still open
+
+- `loot:`/`stash:` are in `aliases.yml` and the handbook's dialect table, but
+  the canonical schema and IR carry no such keys, so a workflow using them is
+  rejected with E201. `storage/artifacts.py` and `cache.py` are written and
+  have zero call sites (D25). Either wire them or cut the aliases.
+- `actions/docker_action.py` and `js_action.py` are empty files (C15/C16).
+- Layer-3 codes E304-E308, E313-E317, W318 registered but unimplemented.
+- `tests/corpus/` still empty.
+- CI has still never run: `.github/workflows/ci.yml` is staged at the repo root
+  but uncommitted.
+- `RunConsole` re-emits a job header per event group — a matrix job prints its
+  header several times.
+
+## session-6b — the first CI run, and what it caught
+
+CI ran for the first time in the project's life (commit 7924947). Result:
+`ubuntu-latest` x2, `macos-latest` x2, `docker` and `rules-doc` all green;
+**windows-latest red on both 3.11 and 3.12.** Two distinct causes, both fixed.
+
+### 1. `script_suffix` did not apply the platform default — a real product bug
+
+`shell_argv(None, ..., in_container=False)` resolves to `pwsh` on Windows.
+`script_suffix(None)` resolved separately and always fell through to `.sh`. So
+every step without an explicit `shell:` was written to `script.sh` and invoked
+as `pwsh -NoProfile -NonInteractive -File ...script.sh` — and pwsh runs `.ps1`
+and nothing else, which the note on `script_suffix` had said all along.
+
+Every job on Windows flopped. `yeet run` exited 1 where the test expected 0.
+
+Fixed by extracting `script.resolve_shell(shell, *, in_container)` and having
+BOTH functions call it. `in_container` is now a required keyword on
+`script_suffix` rather than defaulted: the answer differs between the two
+backends on one machine, and a default would let the bug back in silently.
+
+The shape of this bug is worth naming: **two functions deriving the same
+default independently.** The existing test asserted `shell_argv` picked `pwsh`
+on Windows and never asked what suffix went with it, so it passed throughout.
+
+### 2. The e2e harness decoded child output with the wrong codec
+
+`subprocess.run(..., text=True)` without `encoding=` decodes with the locale
+encoding — cp1252 on Windows. `PYTHONIOENCODING=utf-8` configures the CHILD
+only, so the child emitted UTF-8 (`●`, `├─`, `📦`) and the parent read cp1252:
+`UnicodeDecodeError` inside subprocess's reader thread, `stdout` came back
+None, and four tests died on `result.stdout + result.stderr` with a TypeError
+naming neither the encoding nor the platform. Now `encoding="utf-8",
+errors="replace"`.
+
+### 3. e2e steps that are bash-specific now say so
+
+`${#VAR}`, `>> "$GITHUB_OUTPUT"` and `$VAR` are POSIX; on Windows the local
+default is correctly `pwsh` (GitHub's default there too, and plan.md C13's).
+Those steps now carry `shell: bash`, which is what a real cross-platform
+workflow does and which exercises C13's "honors `shell:`" as a bonus. The
+walking skeleton and the matrix tripwire deliberately keep the default shell,
+so they still exercise the pwsh path on Windows — they are what catches a
+regression of #1 end to end.
+
+### Verification
+
+    make check        all six gates green
+    pytest            690 passed, 18 deselected
+    pytest -m docker  18 passed against a live daemon
+
+Both new tests were checked by breaking them: restoring the old
+`script_suffix` fails `test_the_suffix_matches_the_shell_that_will_run_it` and
+`test_on_windows_the_script_is_written_where_pwsh_can_run_it`.
+
+Windows itself is verified by CI on the PR, not locally — macOS cannot prove it.
+
+## DEV-C status
+
+C's assigned work is complete: contexts (s6), plus the Windows shell pair.
+Remaining C items are C15/C16 — `actions/docker_action.py` and `js_action.py`
+are still empty files — and the executor half of `loot:`/`stash:`, which is
+blocked on Dev A adding the IR fields and schema keys first.
