@@ -7,6 +7,7 @@
   "required": ["on", "jobs"],
   "properties": {
     "name": { "type": "string" },
+    "run-name": { "type": "string" },
     "on": {
       "oneOf": [
         { "type": "string" },
@@ -16,9 +17,32 @@
     },
     "env": {
       "type": "object",
-      "additionalProperties": { "type": "string" }
+      "additionalProperties": {
+        "anyOf": [
+          { "type": "string" },
+          { "type": "integer" },
+          { "type": "number" },
+          { "type": "boolean" }
+        ]
+      }
     },
     "defaults": { "type": "object" },
+    "permissions": {
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      ]
+    },
+    "concurrency": {
+      "type": "object",
+      "properties": {
+        "group": { "type": "string" },
+        "cancel-in-progress": { "type": ["boolean", "string"] }
+      }
+    },
     "jobs": {
       "type": "object",
       "minProperties": 1,
@@ -39,12 +63,32 @@
             { "type": "array", "items": { "type": "string" } }
           ]
         },
-        "env": { "type": "object" },
+        "env": {
+          "oneOf": [
+            { "type": "object" },
+            { "type": "string" }
+          ]
+        },
         "if": { "type": "string" },
         "strategy": { "$ref": "#/$defs/strategy" },
         "container": { "type": ["string", "object"] },
         "timeout-minutes": { "type": "integer" },
         "outputs": { "type": "object" },
+        "continue-on-error": { "type": ["boolean", "string"] },
+        "permissions": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "object" }
+          ]
+        },
+        "concurrency": {
+          "type": "object",
+          "properties": {
+            "group": { "type": "string" },
+            "cancel-in-progress": { "type": ["boolean", "string"] }
+          }
+        },
+        "services": { "type": "object" },
         "steps": {
           "type": "array",
           "items": { "$ref": "#/$defs/step" }
@@ -81,8 +125,8 @@
         "if": { "type": "string" },
         "shell": { "type": "string" },
         "working-directory": { "type": "string" },
-        "continue-on-error": { "type": "boolean" },
-        "timeout-minutes": { "type": "integer" }
+        "continue-on-error": { "type": ["boolean", "string"] },
+        "timeout-minutes": { "type": ["integer", "string"] }
       }
     }
   }

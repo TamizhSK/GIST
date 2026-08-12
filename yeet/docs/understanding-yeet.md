@@ -499,10 +499,12 @@ the_grind:                     # jobs:
 `multiverse`→matrix · `patience`→timeout-minutes · `delulu`/`its_fine`→continue-on-error ·
 `where`→working-directory
 
-> **Note:** `loot`→artifacts and `stash`→cache are present in the alias table but
-> the canonical schema and IR do not yet carry those keys, so a workflow using
-> them is currently rejected with `YEET-E201`. Treat them as unimplemented until
-> the storage wiring lands.
+> **Note:** `loot`→artifacts and `stash`→cache were removed from the alias table
+> in the same session `actions/upload-artifact` and `actions/cache` became
+> reachable as ordinary `uses:` steps. Job-level `artifacts:`/`cache:` keys are
+> not canonical GitHub Actions, so a dialect key for them would validate clean
+> and then silently do nothing at runtime — the alias table's one rule is that
+> the right-hand side is a canonical key. Use the actions instead.
 
 Status vocabulary in output: **slayed** (success) · **flopped** (failure) ·
 **mid** (partial) · **cooked** (running) · **skipped (not the vibe)**.

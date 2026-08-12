@@ -1,0 +1,65 @@
+name: Tests
+on:
+  pull_request:
+    paths-ignore: ['docs/**', 'README.md']
+  push:
+    branches: [main, stable]
+    paths-ignore: ['docs/**', 'README.md']
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  tests:
+    name: ${{ matrix.name || matrix.python }}
+    runs-on: ${{ matrix.os || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {python: '3.15'}
+          - {python: '3.14'}
+          - {python: '3.14t'}
+          - {name: Windows, python: '3.14', os: windows-latest}
+          - {name: Mac, python: '3.14', os: macos-latest}
+          - {python: '3.13'}
+          - {python: '3.12'}
+          - {python: '3.11'}
+          - {python: '3.10'}
+          - {name: PyPy, python: 'pypy-3.11', tox: pypy3.11}
+          - {name: Minimum Versions, python: '3.14', tox: tests-min}
+          - {name: Development Versions, python: '3.10', tox: tests-dev}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          prune-cache: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
+      - run: uv run --locked --no-default-groups --group dev tox run
+        env:
+          TOX_ENV: ${{ matrix.tox || format('py{0}', matrix.python) }}
+  typing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          prune-cache: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: pyproject.toml
+      - name: cache mypy
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ./.mypy_cache
+          key: mypy|${{ hashFiles('pyproject.toml') }}
+      - run: uv run --locked --no-default-groups --group dev tox run -e typing
