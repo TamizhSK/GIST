@@ -119,6 +119,58 @@ def shell_executable(name: str) -> str:
     return name
 
 
+def pid_alive(pid: int) -> bool:
+    """Is this pid a running process? **Probes. Never signals.**
+
+    `os.kill(pid, 0)` is the POSIX idiom and it is actively dangerous on
+    Windows: CPython's `os.kill` there special-cases only CTRL_C_EVENT and
+    CTRL_BREAK_EVENT and otherwise calls `TerminateProcess(handle, sig)` — so
+    signal 0, the "just checking" signal everywhere else, KILLS the process.
+
+    A stale `watch.lock` holding a recycled pid would therefore terminate an
+    unrelated program on the user's machine. It also killed the CI shell: the
+    lock test writes `os.getppid()` to look "alive and not us", and probing it
+    on windows-latest terminated the pwsh process running the step, so the
+    whole pytest session died with a KeyboardInterrupt after the test had
+    already passed.
+
+    On Windows we ask the kernel instead. A process that exited with code 259
+    (STILL_ACTIVE) is indistinguishable from a running one; that is a
+    documented quirk of the API and is not worth a second syscall here, since
+    the only cost is declining to take over one stale lock.
+    """
+    if is_windows():
+        return _pid_alive_windows(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, owned by someone else
+    except OSError:
+        return False
+    return True
+
+
+def _pid_alive_windows(pid: int) -> bool:
+    import ctypes
+
+    process_query_limited_information = 0x1000
+    still_active = 259
+
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        return False
+    try:
+        code = ctypes.c_ulong()
+        if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return bool(code.value == still_active)
+        return True  # it exists; we just cannot read its status
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def runner_os() -> str:
     """The value of `RUNNER_OS` / the `runner.os` context. GitHub's vocabulary."""
     if is_windows():

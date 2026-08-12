@@ -127,3 +127,31 @@ def test_shell_executable_is_a_noop_off_windows(monkeypatch):
     monkeypatch.setattr(platform_, "is_windows", lambda: False)
     assert platform_.shell_executable("bash") == "bash"
     assert platform_.shell_executable("sh") == "sh"
+
+
+def test_pid_alive_says_yes_to_us_and_no_to_a_fiction():
+    import os
+
+    assert platform_.pid_alive(os.getpid()) is True
+    assert platform_.pid_alive(999999999) is False
+
+
+def test_pid_alive_never_signals_on_windows(monkeypatch):
+    """The safety property, and the whole reason this function exists.
+
+    `os.kill(pid, 0)` probes on POSIX. On Windows CPython special-cases only
+    CTRL_C_EVENT and CTRL_BREAK_EVENT and otherwise calls `TerminateProcess`,
+    so signal 0 KILLS the target. A stale `watch.lock` holding a recycled pid
+    would have terminated an unrelated program; on CI it killed the shell
+    running pytest, which is why the Windows leg died with a KeyboardInterrupt
+    after all 660 tests had already passed.
+
+    Asserts the negative directly: on Windows, `os.kill` is never reached.
+    """
+    called: list[object] = []
+    monkeypatch.setattr(platform_, "is_windows", lambda: True)
+    monkeypatch.setattr(platform_.os, "kill", lambda *a: called.append(a))
+    monkeypatch.setattr(platform_, "_pid_alive_windows", lambda _pid: True)
+
+    assert platform_.pid_alive(1234) is True
+    assert called == [], "os.kill must never be called on Windows — it terminates"
