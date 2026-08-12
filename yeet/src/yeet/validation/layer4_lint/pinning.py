@@ -7,11 +7,21 @@ See docs/architecture.md
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from yeet.core.diagnostics import Diagnostic, Position, Severity
 from yeet.core.ir import Workflow
 from yeet.validation.layer4_lint.base import register
+
+#: Refs that are re-pointed in place, so `uses: x@main` is a different action
+#: tomorrow than it is today.
+_MOVING_REFS = frozenset({"main", "master", "head", "latest"})
+
+#: `@v4` is also a moving ref — GitHub's convention is that the major tag is
+#: re-pointed at every minor release. It was previously a hardcoded ("v1", "v2")
+#: list, which quietly let `@v3` and up through for no stated reason.
+_MAJOR_VERSION_REF = re.compile(r"v\d+")
 
 
 class PinningRule:
@@ -21,24 +31,35 @@ class PinningRule:
         diags: list[Diagnostic] = []
 
         for job_id, job in wf.jobs.items():
-            # Check container image tag
-            is_latest = job.container_image and job.container_image.endswith(":latest")
-            if job.runs_on == "ubuntu-latest" or is_latest:
+            # W403 is about a CONTAINER IMAGE that floats — `container: node:latest`
+            # or an image with no tag at all, which Docker resolves to :latest.
+            #
+            # It deliberately does NOT look at `runs-on`/`cooked_on`. This rule
+            # used to fire on `runs-on: ubuntu-latest`, which is a runner LABEL,
+            # not an image reference — it is the value GitHub documents, the one
+            # in plan.md's own walking skeleton, and the one in nearly every
+            # workflow on earth. A lint that fires on the recommended spelling of
+            # the most common field is noise, and noisy lints get switched off
+            # wholesale, taking W404 (hardcoded secrets) down with them.
+            image = job.container_image
+            if image and (image.endswith(":latest") or ":" not in image.rsplit("/", 1)[-1]):
                 diags.append(
                     Diagnostic(
                         code="YEET-W403",
                         severity=Severity.WARNING,
-                        message=f"Job `{job_id}` uses image/tag `:latest`",
+                        message=f"Job `{job_id}` runs in container image `{image}`, "
+                        f"which floats to the newest build",
                         file=path,
                         pos=job.pos or Position(line=0, col=0),
-                        help="Pin container images to specific version tags",
+                        help="Pin the image to a specific tag or digest so a rerun "
+                        "of this workflow gets the same container",
                     )
                 )
 
             for step in job.steps:
                 if step.uses:
                     ref = step.uses.split("@")[-1] if "@" in step.uses else ""
-                    if ref in ("main", "master", "latest", "head", "v1", "v2"):
+                    if ref in _MOVING_REFS or _MAJOR_VERSION_REF.fullmatch(ref):
                         diags.append(
                             Diagnostic(
                                 code="YEET-W402",

@@ -83,11 +83,21 @@ def test_auto_flow_with_dockerfile(tmp_path):
 
 def test_generated_flow_passes_layer1_and_layer2(tmp_path):
     flow = tmp_path / "main.yml"
-    flow.write_text(workflows.auto_flow("py-app", [
-        Ecosystem(name="python", marker=tmp_path / "pyproject.toml",
-                  suggested_image="python:3.12",
-                  default_commands=["pip install -e .", "pytest"]),
-    ], dockerfile=False), encoding="utf-8")
+    flow.write_text(
+        workflows.auto_flow(
+            "py-app",
+            [
+                Ecosystem(
+                    name="python",
+                    marker=tmp_path / "pyproject.toml",
+                    suggested_image="python:3.12",
+                    default_commands=["pip install -e .", "pytest"],
+                ),
+            ],
+            dockerfile=False,
+        ),
+        encoding="utf-8",
+    )
 
     bag1, data = check_layer1(flow)
     assert not bag1.items, [d.message for d in bag1.items]

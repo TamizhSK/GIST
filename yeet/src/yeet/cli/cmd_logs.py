@@ -30,9 +30,9 @@ def logs(
     events = list(replay(root, run_id=run_id))
     if not events:
         target_name = run_id or "latest"
-        print(f"No run logs found for '{target_name}'.")
+        typer.echo(f"No run logs found for '{target_name}'.")
         return
 
-    print(f"--- Replaying log for run: {run_id or 'latest'} ---")
+    typer.echo(f"--- Replaying log for run: {run_id or 'latest'} ---")
     for event in events:
         console.emit(event)

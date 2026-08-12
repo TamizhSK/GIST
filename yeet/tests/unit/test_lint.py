@@ -1,4 +1,14 @@
-"""Unit tests for layer4_lint rules (Dev D / Tasks D11 - D16)."""
+"""Unit tests for layer4_lint rules (Dev D / Tasks D11 - D16).
+
+NOTE the import style below: the rule classes are imported directly, which is
+convenient for testing one rule in isolation and is *exactly* how this file hid
+a production bug for three sessions. Rules self-register on import, so
+importing `NamingRule` here registered it here — while the product imported
+only `layer4_lint.base` and ran with `RULES == []`, i.e. no lints at all.
+
+`test_registration.py` is the guard for that; keep these direct imports for the
+per-rule tests, but never treat them as evidence the layer is wired up.
+"""
 
 from __future__ import annotations
 
@@ -44,6 +54,7 @@ def test_pinning_rule(tmp_path: Path) -> None:
                 pos=P0,
                 name="build",
                 runs_on="ubuntu-latest",
+                container_image="node:latest",
                 steps=[Step(pos=P0, uses="actions/checkout@main")],
             )
         },
@@ -51,8 +62,65 @@ def test_pinning_rule(tmp_path: Path) -> None:
     rule = PinningRule()
     diags = rule.check(wf, wf_file)
     codes = [d.code for d in diags]
-    assert "YEET-W402" in codes
-    assert "YEET-W403" in codes
+    assert "YEET-W402" in codes  # uses: ...@main
+    assert "YEET-W403" in codes  # container: node:latest
+
+
+def test_w403_ignores_the_runner_label(tmp_path: Path) -> None:
+    """`runs-on: ubuntu-latest` is a runner label, not a floating image tag.
+
+    W403 used to fire on it, which meant the rule went off on plan.md's own
+    walking skeleton and on essentially every real workflow. A lint that cries
+    wolf on the recommended spelling gets the whole layer switched off.
+    """
+    wf_file = tmp_path / "test.yml"
+    wf = Workflow(
+        source=wf_file,
+        pos=P0,
+        name="CI",
+        jobs={
+            "build": Job(
+                key="build",
+                pos=P0,
+                name="build",
+                runs_on="ubuntu-latest",  # the only "latest" in this workflow
+                steps=[Step(pos=P0, uses="actions/checkout@a1b2c3d")],
+            )
+        },
+    )
+    diags = PinningRule().check(wf, wf_file)
+    assert [d.code for d in diags] == []
+
+
+def test_w403_flags_an_untagged_image(tmp_path: Path) -> None:
+    """No tag at all resolves to :latest, so it floats just the same."""
+    wf_file = tmp_path / "test.yml"
+    wf = Workflow(
+        source=wf_file,
+        pos=P0,
+        name="CI",
+        jobs={"build": Job(key="build", pos=P0, name="build", container_image="python", steps=[])},
+    )
+    assert "YEET-W403" in [d.code for d in PinningRule().check(wf, wf_file)]
+
+
+def test_w403_accepts_a_pinned_image(tmp_path: Path) -> None:
+    wf_file = tmp_path / "test.yml"
+    wf = Workflow(
+        source=wf_file,
+        pos=P0,
+        name="CI",
+        jobs={
+            "build": Job(
+                key="build",
+                pos=P0,
+                name="build",
+                container_image="ghcr.io/acme/python:3.12",
+                steps=[],
+            )
+        },
+    )
+    assert [d.code for d in PinningRule().check(wf, wf_file)] == []
 
 
 def test_secrets_scan_rule(tmp_path: Path) -> None:

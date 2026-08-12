@@ -458,3 +458,148 @@ Delivered this session
 B10 (planner/matrix.py + 11 tests) → B11 (planner/plan.py + 13 tests) → B9 (layer3_semantic.py + 21 tests, E301/E302/E303/E309/E310/E311/E312) → CSV engine table (46 rows) → B12 (cmd_graph.py + 6 tests) → full make check gate → 3 fail-fast tests (B13 coverage).
 Outstanding hand-offs
 Dev A: parser/builder.py, analyzer/ (stubs block yeet graph full render — currently degrades to "parser is not ready"), suggest.did_you_mean (A15, for E301). Dev C: remove Degradation machinery in interpolate.py. Dev D: remaining L3 codes E304–E308/E313–E317/W318.
+
+# session-5 — integration
+
+The four subsystem sessions each shipped working code. This session found that
+they were not actually connected in three places, fixed those, closed the
+carried-over defects from undone.md, and wrote the team handbook.
+
+## The headline bug: the dialect did not work
+
+`yeet check` on the walking skeleton printed in plan.md §6 — the tool's own
+flagship example — emitted **five errors**:
+
+    error[YEET-E201]: unknown key `vibe`      ... did you mean `vibe`?
+    error[YEET-E201]: unknown key `when`      ... did you mean `when`?
+    error[YEET-E201]: unknown key `the_grind` ... did you mean `the_grind`?
+    error[YEET-E202]: missing required key `on` and `jobs`   (twice)
+
+Cause: `parser/aliases.py::normalize()` had **zero call sites in the product.**
+It was written (A11), unit-tested, and exercised by the golden tests — which
+call `loader → normalize → builder` by hand, exactly the chain the docstring
+describes. `validation/pipeline.py` never called it, so layer 2 validated the
+raw dialect tree against a schema that documents itself as canonical-only.
+
+Fixed in `pipeline.py` between layer 1 and layer 2 (before the `upto=2` early
+return, so `yeet scan` gets it too), threading `used_dialect` into the Workflow.
+
+## Two more "written but not wired"
+
+- **Layer 4 lints never ran.** `RULES` was `[]` in production: rules
+  self-register on import, `layer4_lint/__init__.py` was empty, and the only
+  import in the product was `from ...layer4_lint.base import run_lints`, which
+  loads the registry and none of the rules. `yeet check` on
+  `actions/checkout@main` printed nothing. (Found in session-2 review, still
+  open through sessions 3 and 4.)
+- **`yeet logs` could never find a run.** `RunStore` (D23) was implemented and
+  `cmd_logs` (D24) read it, but nothing ever *constructed* one — §3.2's fan-out
+  had only the console half. Now `FanOut([RunConsole, RunStore])` in `_sink`.
+
+The shape is identical in all three: a module with passing unit tests and no
+caller. `docs/handbook.md` §6 makes the lesson explicit — **when you finish a
+module, grep for its call site.**
+
+## Defects found while wiring, that only appeared once things ran
+
+- **W403 fired on `runs-on: ubuntu-latest`** — a runner *label*, not an image
+  tag. It went off on the walking skeleton and would fire on nearly every real
+  workflow. Now checks `container:` only, plus untagged images (implicit
+  `:latest`). W402's moving-ref list was the arbitrary set `("v1","v2")`; it is
+  a `v\d+` regex now.
+- **The installed `post-commit` hook was broken**: it ran
+  `yeet run --event push --sha $(git rev-parse HEAD)` and `yeet run` has never
+  had a `--sha`. Every commit would have printed "No such option". D27's
+  acceptance criterion could not have passed. Removed (the sha is read from
+  `.git/HEAD` anyway) and both shims now `cd` to the repo top level.
+- **`hooks install` silently overwrote a user's own hooks.** It now refuses
+  unless the hook carries our marker, with `--force` to override.
+- **`RunConsole` printed the `::group::` header before the job header**, because
+  the directive branch returned before the header tracking. Also suppressed the
+  group header when it just repeats the step name.
+- **CI had never run.** `.github/workflows/ci.yml` lived at
+  `yeet/.github/workflows/` — GitHub only discovers workflows at the **repo
+  root**. Moved to `/.github/workflows/ci.yml` with `working-directory: yeet`.
+  (It would also have failed at `pip install -e .`, since `pyproject.toml` is
+  in `yeet/`.) So the "green 3-OS CI badge" was never achievable as configured.
+
+## Carried-over defects from undone.md — all closed
+
+- Dead seams removed: `cmd_run`'s five `_stage`/`_stage_optional` wrappers,
+  `EchoSink`, `EXIT_NOT_READY` (which collided with `EXIT_JOB_FAILED=1`),
+  `interpolate.py`'s `except NotImplementedError` branches, `cmd_scan`'s
+  unreachable "validation not built yet" branch, `cmd_graph`'s "parser is not
+  ready" fallback. `interpolate`'s `Degradation` *stays* — it still guards the
+  real `contexts=None` case — but its note no longer claims Dev B is unfinished.
+- `pipeline.py`'s `except (NotImplementedError, Exception): workflow = None`
+  turned any builder bug into "your file has no jobs". Now reports `YEET-E900`
+  (new, layer 9 = our fault, not the user's); `YEET_DEBUG=1` re-raises.
+  `run_lints`' per-rule `except Exception: continue` likewise reports.
+- `codes.py` title drift corrected against the implementations: E206 is "no jobs
+  defined" (not "invalid event name"), E208 "unsupported event name" (not "empty
+  step list"), E313 "`uses:` could not be resolved", E314 "missing required
+  action input", W319 "`with:` supplies an undeclared input".
+- `run_lints`' docstring claimed a lint.yml-promoted error "still only blocks
+  under --strict". `exit_code()` returns 2 on any error, so it always blocked.
+  Docstring now matches the code.
+- Secrets were **plaintext JSON** under a docstring saying "Encrypted local
+  store", with the declared `cryptography` dep unused. Now Fernet with an
+  scrypt-derived key. `keyring` is an *optional* import, not a new dependency
+  (plan.md §8 says announce first). Legacy plaintext stores are still readable —
+  losing someone's tokens silently is worse — and any write re-encrypts the
+  whole file.
+- The watcher was a polling `rglob` loop that ignored **all** of `.yeet/`,
+  so editing `.yeet/flows/main.yml` — the only reason to run `yeet watch` —
+  triggered nothing. Rewritten on watchdog with a 500 ms debounce, a per-project
+  pid lock (stale locks taken over), and `.yeet/tmp|runs|artifacts|cache`
+  ignored rather than `.yeet` wholesale. `watch(paths, on_change)` per §4.
+- `print()` under `src/` is now a build failure (`make noprint`), checked by AST
+  so it does not trip on the word inside a docstring — `core/diagnostics.py`
+  opens with "Nobody calls print() for an error. Ever."
+
+- **`${{ secrets.X }}` resolved to nothing.** `Contexts.secrets` was never
+  populated by `cmd_run`, so secrets reached the `Masker` (nothing leaked)
+  but never the expression evaluator (nothing worked). Caught only by
+  running a real workflow that echoes a secret and checking the length
+  rather than the absence. `tests/e2e` now asserts both halves.
+
+## Gate
+
+`make check` gained `format` and `noprint`; it was missing `ruff format
+--check`, which CI ran and the Makefile did not — the exact drift that left
+`main` red twice while everyone believed they had run the gate. CI now runs the
+identical set, plus a `rules-doc` job that regenerates `docs/rules.md` and
+diffs, plus a Docker job (the 18 container tests had never run in CI).
+
+    ruff check · ruff format --check · lint-imports (2 kept, 0 broken)
+    mypy strict (101 files) · check_no_print · pytest 671 passed
+
+## Tests added (+66)
+
+- `tests/e2e/test_walking_skeleton.py` (8) — plan.md §6's tripwire, finally
+  written. Drives the real CLI in a subprocess: the dialect runs, canonical
+  GitHub Actions runs, a bad `needs:` is refused with exit 2 before anything
+  executes, a failing step exits 1, and a run is recorded and replayable.
+- `test_dialect_parity.py` (13) — dialect and canonical build identical IR,
+  through `validate_file` rather than by composing the stages by hand.
+- `test_lint_registration.py` (5) — including a subprocess check, because this
+  file's own imports would otherwise mask the very bug it guards.
+- `test_secrets.py` (15) — round-trip, and the token is not on disk in the clear.
+- `test_watcher.py` (22) — debounce with an injected clock, lock takeover,
+  and `.yeet/flows` staying watched.
+- `test_lint.py` — three W403 cases pinning the runner-label regression.
+
+## For standup
+
+1. **`architecture.md` is now the oldest document in the repo** and states
+   several things that are no longer true (the `docs/rules.md` generator, the
+   tier placements superseded by ADR 0007, `base_env`). `docs/handbook.md` is
+   the new front door; someone should do an accuracy pass on architecture.md.
+2. **`tests/corpus/` is still empty.** The "% of real-world syntax supported"
+   number in the demo needs 5–10 real OSS workflows dropped in. It is an hour
+   of work and it is a presentation slide.
+3. **The Docker CI job is my call to make reversible** — it costs ~2 min/push.
+   Drop the job if that is not wanted.
+4. `plan.md` §2.4 (read the frozen contracts out loud) and §2.5 (`git config
+   core.autocrlf input`, `pre-commit install` per machine) are still open, and
+   still need people rather than commits.

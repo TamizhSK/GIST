@@ -1,4 +1,4 @@
-"""yeet watch — daemon: watch for new/changed projects and dispatch runs.
+"""yeet watch — daemon: revalidate a flow the moment it is saved.
 
 Owner: Dev D
 Tier: 7 — may import from: anything
@@ -12,27 +12,50 @@ from typing import Annotated
 
 import typer
 
+from yeet.cli import EXIT_BAD_WORKFLOW, color_enabled
 from yeet.reporting.render import render_diagnostics
-from yeet.triggers.watcher import watch_directory
+from yeet.triggers.watcher import DEBOUNCE_MS, LockHeld
+from yeet.triggers.watcher import watch as watch_paths
 from yeet.validation.pipeline import validate_file
 
 
 def watch(
+    ctx: typer.Context,
     path: Annotated[Path, typer.Argument(help="Directory to watch.")] = Path(),
+    strict: Annotated[bool, typer.Option("--strict", help="Warnings count as failures.")] = False,
 ) -> None:
-    """Debounce 500ms, hold a per-project lock, ignore .git/node_modules/.yeet/tmp.
+    """Debounce 500ms, hold a per-project lock, ignore the dirs a run writes to.
 
-    A broken workflow file logs and waits. It must never crash the daemon.
+    A broken workflow file prints its diagnostics and the daemon keeps waiting.
+    It must never crash — you leave this running in a second terminal all day.
     """
-    target = path if path.exists() else Path.cwd()
+    target = (path if path.exists() else Path.cwd()).resolve()
+    color = color_enabled(ctx)
 
     def on_change(file_path: Path) -> None:
-        print(f"\n[watch] File changed: {file_path}")
-        bag, _ = validate_file(file_path, upto=4)
-        if bag.items:
-            output = render_diagnostics(bag)
-            print(output)
-        else:
-            print("✔ Workflow validation clean!")
+        try:
+            rel: Path | str = file_path.relative_to(target)
+        except ValueError:
+            rel = file_path
+        typer.secho(f"\n[watch] {rel}", fg=typer.colors.CYAN if color else None)
 
-    watch_directory(target, on_change)
+        bag, _ = validate_file(file_path, strict=strict, upto=4)
+        if len(bag):
+            typer.echo(render_diagnostics(bag, color=color))
+        if bag.exit_code(strict=strict) == 0:
+            typer.secho("✔ clean", fg=typer.colors.GREEN if color else None)
+
+    def on_error(exc: Exception) -> None:
+        # The daemon survives; the user still hears about it.
+        typer.secho(f"[watch] {exc!r}", fg=typer.colors.RED if color else None, err=True)
+
+    typer.secho(
+        f"watching {target} (debounce {DEBOUNCE_MS}ms) — Ctrl-C to stop",
+        fg=typer.colors.BRIGHT_WHITE if color else None,
+    )
+    try:
+        watch_paths([target], on_change, on_error=on_error)
+    except LockHeld as exc:
+        typer.secho(str(exc), fg=typer.colors.RED if color else None, err=True)
+        raise typer.Exit(EXIT_BAD_WORKFLOW) from exc
+    typer.echo("\nstopped.")

@@ -4,6 +4,7 @@ Adding a rule = add a row here + implement it + add tests/invalid/<CODE>.yml.
 docs/rules.md is GENERATED from this table, so it can never drift.
 
 Ranges:  E0xx file · E1xx yaml · E2xx schema · E3xx semantic · W4xx lint · I4xx info
+         E9xx internal (a bug in yeet, not in the user's workflow)
 
 Owner: Dev D (but everyone adds rows)
 Tier: 0
@@ -61,9 +62,13 @@ RULES: dict[str, Rule] = {
         _e("E203", "invalid data type", 2),
         _e("E204", "step has both `run` and `uses`", 2),
         _e("E205", "step has neither `run` nor `uses`", 2),
-        _e("E206", "invalid event name", 2),
+        # E206/E208 titles corrected to match what layer2_schema.py actually
+        # emits — they were swapped, and `yeet explain` reads this table via
+        # generated docs/rules.md, so users were being told the wrong thing.
+        # tests/invalid/E206.yml is `jobs: {}`; E208.yml is `on: [qwerty]`.
+        _e("E206", "no jobs defined", 2),
         _e("E207", "invalid job id", 2),
-        _e("E208", "empty step list", 2),
+        _e("E208", "unsupported event name", 2),
         # Layer 3 — semantic
         _e("E301", "`needs` references an unknown job", 3),
         _e("E302", "dependency cycle", 3),
@@ -77,13 +82,14 @@ RULES: dict[str, Rule] = {
         _e("E310", "expression references unknown context", 3),
         _e("E311", "expression references unknown function", 3),
         _e("E312", "invalid expression position", 3),
-        _e("E313", "missing required action input", 3),
-        _e("E314", "unknown action input", 3),
+        # E313/E314/W319 titles corrected to match actions/resolver.py.
+        _e("E313", "`uses:` could not be resolved", 3),
+        _e("E314", "missing required action input", 3),
         _e("E315", "`cooked_on:` could not be resolved to an image", 3),
         _e("E316", "invalid runner specification", 3),
         _w("W317", "deprecated workflow syntax", 3),
         _w("W318", "unused output variable", 3),
-        _w("W319", "action version mismatch", 3),
+        _w("W319", "`with:` supplies an input the action does not declare", 3),
         # Layer 4 — lint / standards
         _w("W401", "missing name", 4),
         _w("W402", "action pinned to a moving ref", 4),
@@ -100,6 +106,11 @@ RULES: dict[str, Rule] = {
         _w("W413", "zero steps in job", 4),
         _w("W414", "duplicated step block across jobs", 4),
         _i("I415", "mixed dialect and canonical keys", 4),
+        # Layer 9 — yeet's own faults, never the user's
+        # Reported instead of swallowed: the pipeline used to turn any builder
+        # crash into a silent `workflow = None`, which reads to the user as
+        # "your file has no jobs" and sends them hunting for our bug.
+        _e("E900", "internal error in yeet itself", 9),
     ]
 }
 

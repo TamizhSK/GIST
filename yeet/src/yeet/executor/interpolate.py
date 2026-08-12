@@ -1,19 +1,20 @@
-"""The `${{ }}` seam. All of it delegates to Dev B — none of it evaluates.
+"""The `${{ }}` seam: the one place that knows how expressions are delimited.
 
 WHY THIS FILE EXISTS (it is not in plan.md's file list). The executor has to
-substitute `${{ }}` in `run:` text and decide step-level `if:`, but the
-expression engine is Dev B's and is not written yet. Putting the seam in one
-30-line module means:
+substitute `${{ }}` in `run:` text and decide step-level `if:`. Keeping that in
+one small module means there is exactly one place that knows the delimiters,
+and it is not smeared across two backends.
 
-  * there is exactly one place that knows how `${{ }}` is delimited, and it is
-    not smeared across two backends;
-  * we contain the degradation. Until `expressions.parse` exists, text passes
-    through untouched and the run says so once, out loud. It is never silent —
-    a workflow quietly running with a literal `${{ github.sha }}` in it is the
-    kind of thing you discover in a demo.
+The evaluation itself is Dev B's (`expressions.parser` / `expressions.evaluator`)
+and has landed, so the `except NotImplementedError` branches that used to guard
+the seam are gone.
 
-Delete `_degraded` and the two `except NotImplementedError` blocks when Dev B
-lands B4/B6. Nothing else here changes.
+What remains is the `Degradation` counter, and it still guards a real case:
+`RunOptions.contexts` is optional, so a caller (every executor unit test, for
+one) can drive a run with no contexts at all. Then there is nothing to resolve
+against and `${{ ... }}` passes through literally — which the run says once, out
+loud. A workflow quietly running with a literal `${{ github.sha }}` in it is the
+kind of thing you discover in a demo.
 
 Owner: Dev C
 Tier: 5 — may import from: everything below tier 5
@@ -32,8 +33,7 @@ from yeet.expressions.parser import parse
 EXPR = re.compile(r"\$\{\{(?P<body>.*?)\}\}", re.DOTALL)
 
 DEGRADED_NOTE = (
-    "expression engine not implemented yet (Dev B, plan.md B4/B6) — "
-    "`${{ ... }}` is being passed through literally"
+    "no expression contexts were supplied for this run — `${{ ... }}` was passed through literally"
 )
 
 
@@ -71,9 +71,6 @@ def expand(text: str | None, ctx: Contexts | None, degraded: Degradation) -> str
     def replace(match: re.Match[str]) -> str:
         try:
             return _stringify(evaluate(parse(match.group("body")), ctx))
-        except NotImplementedError:
-            degraded.note()
-            return match.group(0)
         except Exception:  # noqa: BLE001 - ExprSyntaxError et al; never kill a run
             return match.group(0)
 
@@ -101,9 +98,6 @@ def truthy(expr: str | None, ctx: Contexts | None, degraded: Degradation) -> boo
         return True
     try:
         return evaluate_truthy(evaluate(parse(body), ctx))
-    except NotImplementedError:
-        degraded.note()
-        return True
     except Exception:  # noqa: BLE001 - a bad `if:` is E309's problem, not a crash
         return True
 

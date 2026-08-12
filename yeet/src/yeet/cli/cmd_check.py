@@ -38,7 +38,7 @@ def check(
         if not flow_candidates and (target / "yeet.yml").exists():
             flow_candidates = [target / "yeet.yml"]
         if not flow_candidates:
-            print(f"No workflow files found in {target}")
+            typer.echo(f"No workflow files found in {target}")
             sys.exit(0)
     else:
         flow_candidates = [target]
@@ -58,7 +58,7 @@ def check(
         output = render_diagnostics(combined_bag)
 
     if output.strip():
-        print(output)
+        typer.echo(output)
 
     exit_code = combined_bag.exit_code(strict=strict)
     sys.exit(exit_code)

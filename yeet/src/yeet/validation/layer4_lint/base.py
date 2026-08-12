@@ -36,8 +36,18 @@ def run_lints(wf: Workflow, path: Path, cfg: dict[str, str]) -> DiagnosticBag:
     """Run every registered rule and apply `.yeet/lint.yml` severity overrides.
 
     `cfg` comes from `core.config.load_lint_config`: {"YEET-W403": "error",
-    "YEET-W407": "off"}. Layer 4 never blocks unless --strict, so a rule
-    promoted to "error" here still only blocks under --strict.
+    "YEET-W407": "off"}.
+
+    On what "error" in lint.yml actually does: it makes the diagnostic an
+    ERROR, and `DiagnosticBag.exit_code()` returns 2 for any error, --strict or
+    not. So promoting a lint to `error` in `.yeet/lint.yml` makes it blocking,
+    full stop. (An earlier version of this docstring claimed it "still only
+    blocks under --strict"; that was never true of the code, and a team relying
+    on it would have shipped a workflow they thought was merely warned about.)
+    --strict is the separate knob that makes plain *warnings* blocking.
+
+    RULES is populated by importing the package, not this module — see
+    `layer4_lint/__init__.py`.
     """
     bag = DiagnosticBag()
 
@@ -51,7 +61,21 @@ def run_lints(wf: Workflow, path: Path, cfg: dict[str, str]) -> DiagnosticBag:
 
         try:
             diags = rule.check(wf, path)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - one bad rule must not kill the run
+            # A crashing rule used to `continue` in silence, which meant a rule
+            # could stop working and no one would find out. One rule must still
+            # not take down the other nine, so it is caught — but reported.
+            bag.add(
+                Diagnostic(
+                    code="YEET-E900",
+                    severity=Severity.ERROR,
+                    message=f"lint rule {rule.code} crashed: {exc!r}",
+                    file=path,
+                    help="This is a bug in the rule, not in your workflow. "
+                    f"Disable it with `{code_key}: off` in .yeet/lint.yml "
+                    "while it is fixed.",
+                )
+            )
             continue
 
         for diag in diags:

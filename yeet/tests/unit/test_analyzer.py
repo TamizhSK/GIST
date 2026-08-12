@@ -161,7 +161,7 @@ def test_a5_symlink_loop_never_hangs(tmp_path):
     root = tmp_path / "loop"
     root.mkdir()
     try:
-        os.symlink(root, root / "self")
+        (root / "self").symlink_to(root, target_is_directory=True)
     except (OSError, NotImplementedError):
         pytest.skip("symlinks need privilege on this platform")
 

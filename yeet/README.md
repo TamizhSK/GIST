@@ -12,15 +12,32 @@ yeet check .       # is the .yml written correctly?  (5 validation layers)
 yeet run           # run it in Docker
 ```
 
+## Start here
+
+**[`docs/handbook.md`](docs/handbook.md)** — the twenty-minute orientation:
+architecture, every command, and how we work. Read that first.
+
+Then, as needed: [`docs/architecture.md`](docs/architecture.md) for the design
+rationale (amended by [`docs/adr/0007`](docs/adr/0007-tier-rule-consequences.md)),
+[`../plan.md`](../plan.md) for the file-by-file ownership map,
+[`docs/getting-started.md`](docs/getting-started.md) for machine setup, and
+[`docs/rules.md`](docs/rules.md) for every diagnostic code (generated from
+`core/codes.py` by `make rules` — never hand-edited).
+
 ## Status
 
-Day 0 skeleton, wired and green — every subsystem is a stub with a frozen
-signature. See `docs/architecture.md` for the design (amended by
-`docs/adr/0007`), `../plan.md` for the file-by-file ownership map, and
-`docs/getting-started.md` for what to do first.
+All five subsystems are implemented and wired end to end. `yeet scan → check →
+graph → run → logs` works on both the dialect and canonical GitHub Actions
+syntax; `cooked_on: local` runs without Docker at all.
 
-`docs/rules.md` — the diagnostic code registry — is generated from
-`core/codes.py` by `make rules`. Not written yet (Dev D, task D18).
+```
+make check     five gates green (lint · format · imports · types · noprint · test)
+pytest         671 fast tests, plus 18 behind `@pytest.mark.docker`
+mypy src       101 source files, strict
+lint-imports   2 contracts kept, 0 broken
+```
+
+Remaining gaps are listed in `docs/handbook.md` §7.
 
 ## Development
 
@@ -33,10 +50,11 @@ source .venv/bin/activate
 
 pip install -e ".[dev]"
 pre-commit install
+git config core.autocrlf input   # skip this and \r bites you on Thursday
 
-pytest -m "not docker"     # unit tests, no Docker needed
-lint-imports               # enforces the tier rule
-yeet --help
+make test      # fast loop, run constantly
+make check     # everything CI runs — before every push
+make fix       # repairs what check complains about
 ```
 
 ## Non-goals

@@ -11,28 +11,19 @@ See docs/architecture.md
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from yeet.analyzer.project import analyze
+from yeet.cli import color_enabled
 from yeet.core.project import Project
 from yeet.validation.pipeline import validate_file
 
 _OK = "✔"
 _BAD = "✖"
 _SKIP = "~"
-
-
-def _color_enabled(ctx: typer.Context | None) -> bool:
-    """Honor the global --no-color flag and the NO_COLOR env var."""
-    if os.environ.get("NO_COLOR"):
-        return False
-    if ctx is not None and ctx.obj:
-        return not bool(ctx.obj.get("no_color"))
-    return True
 
 
 def _echo(text: str, *, color: bool, fg: str | None = None) -> None:
@@ -58,19 +49,18 @@ def _markers(project: Project) -> list[str]:
     return seen
 
 
-def _flow_validity(path: Path) -> tuple[str, int | None, int | None]:
+def _flow_validity(path: Path) -> tuple[str, int, int]:
     """Return (status, n_errors, n_warnings) for one flow.
 
-    Status is "ok" when validation (upto=2) found no errors, "bad" when it
-    did, and "pending" when the pipeline is not built yet (Dev D's layers are
-    stubs on this branch). The command must keep working while a teammate's
-    seam is mid-build — a broken `yeet scan` is the one thing the Day-1 target
-    forbids.
+    Layers 0-2 only: `scan` is meant to be fast enough to run on a repo you
+    just cloned, and "is this file even shaped like a workflow" is answerable
+    without semantic analysis.
+
+    There used to be a third "pending" status for when the validation layers
+    were still stubs. They have all landed, so it is gone — a status that can
+    never occur is a lie in the legend.
     """
-    try:
-        bag, _ = validate_file(path, upto=2)
-    except NotImplementedError:
-        return "pending", None, None
+    bag, _ = validate_file(path, upto=2)
     errors = len(bag.errors)
     warnings = len(bag.warnings)
     return ("bad" if errors else "ok"), errors, warnings
@@ -86,7 +76,7 @@ def scan(
     Zero flows found is NOT an error — print the fingerprint and suggest
     `yeet init --auto`. That is what makes "point it at any repo" true.
     """
-    color = _color_enabled(ctx)
+    color = color_enabled(ctx)
     project = analyze(path)
 
     _echo(f"📦 project: {project.root}", color=color, fg=typer.colors.BRIGHT_WHITE)
@@ -119,13 +109,7 @@ def scan(
     for flow in project.flows:
         rel = flow.relative_to(project.root)
         status, n_errors, n_warnings = _flow_validity(flow)
-        if status == "pending":
-            _echo(
-                f"   {_SKIP} {rel}      (validation not built yet)",
-                color=color,
-                fg=typer.colors.YELLOW,
-            )
-        elif status == "bad":
+        if status == "bad":
             _echo(
                 f"   {_BAD} {rel}  {n_errors} errors, {n_warnings} warnings → run `yeet check`",
                 color=color,

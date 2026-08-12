@@ -3,20 +3,36 @@
 Owner: Dev D
 Tier: 3 — may import from: core, expressions, reporting, parser, analyzer
 See docs/architecture.md
+
+WHY THE DIALECT PASS LIVES HERE
+-------------------------------
+`aliases.normalize()` runs between layer 1 and layer 2, and this is the only
+place it is called in the product. Layer 2's schema validates the CANONICAL
+form only (see the `description` in workflow.schema.json), so a dialect file
+that is never normalized fails its own schema with a pile of E201s — which is
+exactly what happened before this call existed: `yeet check` rejected the
+walking-skeleton workflow printed in plan.md §6.
+
+It sits in the pipeline rather than inside layer 1 because the pipeline is the
+only component that runs layer 1 and layer 2 back to back, and because
+`normalize()` returns the `used_dialect` flag that has to reach the Workflow.
+`upto=2` (what `yeet scan` uses) still gets normalized data — the pass is
+before the layer-2 early return, not after it.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-from yeet.core.diagnostics import DiagnosticBag
+from yeet.core.diagnostics import Diagnostic, DiagnosticBag, Severity
 from yeet.core.ir import Workflow
 
 
 def validate_file(
     path: Path, *, strict: bool = False, upto: int = 4
 ) -> tuple[DiagnosticBag, Workflow | None]:
-    """layer0 -> layer1 -> layer2 -> layer3 -> layer4. Return everything found.
+    """layer0 -> layer1 -> aliases -> layer2 -> builder -> layer3 -> layer4.
 
     Returns the built Workflow alongside the bag so `cmd_run` can validate and
     then plan without parsing the file a second time. It is None whenever a
@@ -28,6 +44,12 @@ def validate_file(
 
     `upto` is what makes every command a prefix of the same pipeline:
       scan -> upto=2   check -> upto=4   run -> upto=3 (+ layer 4, non-blocking)
+
+    `strict` does not change what any layer *finds* — every diagnostic is
+    collected either way. It changes only whether warnings block, which is
+    `DiagnosticBag.exit_code(strict=...)` at the CLI boundary. It is accepted
+    here because §4 freezes this signature and because a layer may one day want
+    to consult it (E317 is specced that way).
     """
     bag = DiagnosticBag()
     workflow: Workflow | None = None
@@ -35,69 +57,82 @@ def validate_file(
     # --- Layer 0: File & encoding checks (Dev D) ---
     from yeet.validation import layer0_file
 
-    try:
-        bag0 = layer0_file.check(path)
-        bag.extend(bag0)
-        if bag.has_errors() or upto < 1:
-            return bag, workflow
-    except NotImplementedError:
-        pass
+    bag.extend(layer0_file.check(path))
+    if bag.has_errors() or upto < 1:
+        return bag, workflow
 
-    # --- Layer 1: YAML parsing & aliases (Dev A) ---
+    # --- Layer 1: YAML syntax, duplicate keys, the `on:`-is-True trap (Dev A) ---
     from yeet.validation import layer1_yaml
 
-    data: object | None = None
-    try:
-        bag1, data = layer1_yaml.check(path)
-        bag.extend(bag1)
-        if bag.has_errors() or data is None or upto < 2:
-            return bag, workflow
-    except NotImplementedError:
-        # Layer 1 not implemented yet by Dev A
+    bag1, data = layer1_yaml.check(path)
+    bag.extend(bag1)
+    if bag.has_errors() or data is None or upto < 2:
         return bag, workflow
+
+    # --- Dialect: rewrite `vibe`/`the_grind`/`moves`/... to canonical keys (Dev A) ---
+    # In place and position-preserving, so every diagnostic below still points
+    # at the line the user actually wrote. Never fails, never warns.
+    from yeet.parser.aliases import normalize
+
+    data, used_dialect = normalize(data)
 
     # --- Layer 2: Schema validation (Dev A) ---
     from yeet.validation import layer2_schema
 
-    try:
-        bag2 = layer2_schema.check(data, path)
-        bag.extend(bag2)
-        if bag.has_errors() or upto < 3:
-            return bag, workflow
-    except NotImplementedError:
-        pass
+    bag.extend(layer2_schema.check(data, path))
+    if bag.has_errors() or upto < 3:
+        return bag, workflow
 
     # --- Parser / Builder: dict -> Workflow IR (Dev A) ---
-    try:
-        from yeet.parser.builder import build_workflow
-
-        workflow = build_workflow(data, path, bag)
-    except (NotImplementedError, Exception):
-        workflow = None
-
+    workflow = _build(data, path, bag)
     if workflow is None or upto < 3:
         return bag, workflow
+    workflow.used_dialect = used_dialect
 
     # --- Layer 3: Semantic validation (Dev B) ---
     from yeet.validation import layer3_semantic
 
-    try:
-        bag3 = layer3_semantic.check(workflow)
-        bag.extend(bag3)
-        if bag.has_errors() or upto < 4:
-            return bag, workflow
-    except NotImplementedError:
-        pass
+    bag.extend(layer3_semantic.check(workflow))
+    if bag.has_errors() or upto < 4:
+        return bag, workflow
 
-    # --- Layer 4: Lint / Code standards (Dev D) ---
-    try:
-        from yeet.core.config import load_lint_config
-        from yeet.validation.layer4_lint.base import run_lints
+    # --- Layer 4: Lint / code standards (Dev D) ---
+    # Importing the PACKAGE, not `.base`: the five rule modules self-register on
+    # import, and importing `base` alone leaves RULES empty. See the note in
+    # layer4_lint/__init__.py.
+    from yeet.core.config import load_lint_config
+    from yeet.validation.layer4_lint import run_lints
 
-        cfg = load_lint_config(path.parent)
-        bag4 = run_lints(workflow, path, cfg)
-        bag.extend(bag4)
-    except (NotImplementedError, ImportError):
-        pass
+    bag.extend(run_lints(workflow, path, load_lint_config(path.parent)))
 
     return bag, workflow
+
+
+def _build(data: object, path: Path, bag: DiagnosticBag) -> Workflow | None:
+    """Build the IR, reporting a crash instead of hiding it.
+
+    This used to be `except (NotImplementedError, Exception): workflow = None`,
+    which turned any bug in the builder into "your file has no jobs" — the
+    single worst failure mode for a validator, because the user goes looking for
+    a mistake that is ours. An unexpected exception here is a yeet bug, so it is
+    reported as one, with the real message. `YEET_DEBUG=1` re-raises for a
+    traceback while developing.
+    """
+    from yeet.parser.builder import build_workflow
+
+    try:
+        return build_workflow(data, path, bag)
+    except Exception as exc:  # noqa: BLE001 - deliberate: report, never hide
+        if os.environ.get("YEET_DEBUG"):
+            raise
+        bag.add(
+            Diagnostic(
+                code="YEET-E900",
+                severity=Severity.ERROR,
+                message=f"internal error while building the workflow: {exc!r}",
+                file=path,
+                help="This is a bug in yeet, not in your file. "
+                "Re-run with YEET_DEBUG=1 for a traceback and please report it.",
+            )
+        )
+        return None

@@ -6,6 +6,8 @@ Tier: 7 — may import from: anything
 
 from __future__ import annotations
 
+import os
+
 import typer
 
 EXIT_OK = 0
@@ -16,6 +18,20 @@ EXIT_BAD_WORKFLOW = 2
 """the workflow file is wrong — nothing ran. This is the validation gate."""
 EXIT_NO_DOCKER = 3
 """no daemon. Distinct from 1 because a trainer may pipe this into something."""
+
+
+def color_enabled(ctx: typer.Context | None) -> bool:
+    """Honor the global `--no-color` flag and the `NO_COLOR` env var.
+
+    Lives here so every command answers the question the same way. `NO_COLOR`
+    wins over everything: it is set by the user's environment, not by us, and
+    https://no-color.org asks that its mere presence be sufficient.
+    """
+    if os.environ.get("NO_COLOR"):
+        return False
+    if ctx is not None and ctx.obj:
+        return not bool(ctx.obj.get("no_color"))
+    return True
 
 
 def todo(command: str, owner: str) -> None:

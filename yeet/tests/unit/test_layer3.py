@@ -53,9 +53,7 @@ def test_each_unknown_needs_gets_its_own_diagnostic() -> None:
 
 
 def test_dependency_cycle_is_e302() -> None:
-    wf = make_workflow(
-        {"a": make_job("a", needs=["b"]), "b": make_job("b", needs=["a"])}
-    )
+    wf = make_workflow({"a": make_job("a", needs=["b"]), "b": make_job("b", needs=["a"])})
     assert codes(check(wf)) == ["YEET-E302"]
 
 
@@ -65,9 +63,7 @@ def test_self_cycle_is_e302() -> None:
 
 
 def test_cycle_path_is_in_message() -> None:
-    wf = make_workflow(
-        {"a": make_job("a", needs=["b"]), "b": make_job("b", needs=["a"])}
-    )
+    wf = make_workflow({"a": make_job("a", needs=["b"]), "b": make_job("b", needs=["a"])})
     (diag,) = check(wf).items
     assert "a -> b -> a" in diag.message
 
@@ -136,37 +132,25 @@ def test_unknown_function_is_e311() -> None:
 
 def test_function_names_are_case_insensitive() -> None:
     wf = make_workflow(
-        {
-            "build": make_job(
-                "build", steps=[make_step(run="echo ${{ toJSON(fromJSON('[]')) }}")]
-            )
-        }
+        {"build": make_job("build", steps=[make_step(run="echo ${{ toJSON(fromJSON('[]')) }}")])}
     )
     assert codes(check(wf)) == []
 
 
 def test_bare_context_ident_is_valid() -> None:
-    wf = make_workflow(
-        {"build": make_job("build", steps=[make_step(run="echo ${{ env.FOO }}")])}
-    )
+    wf = make_workflow({"build": make_job("build", steps=[make_step(run="echo ${{ env.FOO }}")])})
     assert codes(check(wf)) == []
 
 
 def test_uses_with_expression_is_e312() -> None:
     wf = make_workflow(
-        {
-            "build": make_job(
-                "build", steps=[make_step(uses="actions/checkout@${{ 'v4' }}")]
-            )
-        }
+        {"build": make_job("build", steps=[make_step(uses="actions/checkout@${{ 'v4' }}")])}
     )
     assert codes(check(wf)) == ["YEET-E312"]
 
 
 def test_literal_uses_is_fine() -> None:
-    wf = make_workflow(
-        {"build": make_job("build", steps=[make_step(uses="actions/checkout@v4")])}
-    )
+    wf = make_workflow({"build": make_job("build", steps=[make_step(uses="actions/checkout@v4")])})
     assert codes(check(wf)) == []
 
 

@@ -46,8 +46,10 @@ def _yaml_quote(value: Any) -> str:
 
 def render_flow(name: str, jobs: list[dict[str, Any]], *, dockerfile: bool, docker_tag: str) -> str:
     """One job dict per ecosystem: `key`, `label`, `image`, `commands`."""
-    return _env().get_template("main.yml.j2").render(
-        name=name, jobs=jobs, dockerfile=dockerfile, docker_tag=docker_tag
+    return (
+        _env()
+        .get_template("main.yml.j2")
+        .render(name=name, jobs=jobs, dockerfile=dockerfile, docker_tag=docker_tag)
     )
 
 

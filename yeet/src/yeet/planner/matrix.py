@@ -63,8 +63,7 @@ def expand(job: Job) -> list[dict[str, Any]]:
             merged = False
             for index, original in enumerate(originals):
                 if all(
-                    key not in original or original[key] == value
-                    for key, value in include.items()
+                    key not in original or original[key] == value for key, value in include.items()
                 ):
                     legs[index].update(include)
                     merged = True

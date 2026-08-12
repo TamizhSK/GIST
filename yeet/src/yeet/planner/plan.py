@@ -89,7 +89,5 @@ def _instance_deps(instances: list[JobInstance]) -> dict[str, list[str]]:
 
     deps: dict[str, list[str]] = {}
     for inst in instances:
-        deps[inst.key] = [
-            dep for needed in inst.job.needs for dep in key_of.get(needed, [])
-        ]
+        deps[inst.key] = [dep for needed in inst.job.needs for dep in key_of.get(needed, [])]
     return deps

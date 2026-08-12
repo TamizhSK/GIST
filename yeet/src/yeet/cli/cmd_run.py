@@ -4,12 +4,12 @@ Wiring only. Every decision worth testing lives in `executor/runner.py`; this
 file turns CLI flags into a `RunOptions` and turns a `RunResult` into an exit
 code.
 
-ON THE `_not_ready` BLOCKS BELOW. Four of the five stages this command drives
-belong to other people and are still `NotImplementedError`. Each call is
-wrapped so the user gets one actionable line instead of a traceback. **Owners:
-delete the wrapper around your stage when you implement it** — they are marked
-individually and none of them hides a bug in our own code, only an absent
-module.
+This command used to wrap each of its five stages in a `_stage()` helper that
+caught `NotImplementedError` and named the owner who still owed us the module.
+All five have landed, so the wrappers are gone: a `NotImplementedError` from a
+finished module is a bug and should look like one, not like an unfinished
+hand-off. The same goes for `EchoSink` (superseded by `RunConsole`) and
+`EXIT_NOT_READY` (which shared the value 1 with `EXIT_JOB_FAILED`).
 
 Owner: Dev C
 Tier: 7 — may import from: anything
@@ -19,15 +19,14 @@ See docs/architecture.md
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, TypeVar
+from typing import Annotated
 
 import typer
 
-from yeet.cli import EXIT_BAD_WORKFLOW, EXIT_NO_DOCKER
+from yeet.cli import EXIT_BAD_WORKFLOW, EXIT_NO_DOCKER, color_enabled
 from yeet.core.diagnostics import DiagnosticBag
-from yeet.core.events import META, FanOut, LogEvent, LogSink
+from yeet.core.events import FanOut, LogSink
 from yeet.core.ir import Workflow
 from yeet.core.masking import Masker
 from yeet.core.project import Project
@@ -37,20 +36,16 @@ from yeet.executor.docker_backend import DockerBackend
 from yeet.executor.images import ImageKind, ImageResolutionError, resolve_image
 from yeet.executor.local_backend import LocalBackend
 from yeet.executor.runner import RunOptions, run_plan
-from yeet.executor.workspace import create
+from yeet.executor.workspace import RunLayout, create
 from yeet.expressions.contexts import Contexts, build_github_context
 from yeet.planner.plan import ExecutionPlan, build_plan
 from yeet.reporting.console import RunConsole
+from yeet.storage.runs import RunStore
 from yeet.validation.pipeline import validate_file
-
-T = TypeVar("T")
-
-EXIT_NOT_READY = 1
-"""A stage of the pipeline is not implemented yet. Not EXIT_JOB_FAILED (nothing
-ran) and not EXIT_BAD_WORKFLOW (the file may be perfectly fine)."""
 
 
 def run(
+    ctx: typer.Context,
     flow: Annotated[str | None, typer.Argument(help="Flow name. Default: all discovered.")] = None,
     path: Annotated[Path, typer.Option("--path", help="Project directory.")] = Path(),
     job: Annotated[str | None, typer.Option("--job", help="Run one job only.")] = None,
@@ -69,27 +64,33 @@ def run(
     """
     root = path.resolve()
 
-    project = _stage("analyzer.project.analyze", "Dev A (A7)", lambda: _analyze(root))
+    project = _analyze(root)
     target = _pick_flow(project, flow)
 
-    bag, workflow = _stage(
-        "validation.pipeline.validate_file",
-        "Dev D (D8)",
-        lambda: validate_file(target, upto=4),
-    )
+    bag, workflow = validate_file(target, upto=4)
     _gate(bag, target)
     if workflow is None:
         raise typer.Exit(EXIT_BAD_WORKFLOW)
 
-    contexts = _contexts(root, event)
-    plan = _stage("planner.plan.build_plan", "Dev B (B11)", lambda: build_plan(workflow, contexts))
-    if job is not None:
-        plan = _only(plan, job)
+    # Secrets are resolved BEFORE the contexts are built, because they are one
+    # of the contexts. `--secret K=V` wins over the store, which wins over
+    # `.env` — `load_secrets` owns that precedence.
+    secrets = _load_secrets(root, _parse_secrets(secret or []))
 
     masker = Masker()
-    overrides = _parse_secrets(secret or [])
-    masker.update(overrides.values())
-    masker.update(_stage_optional("secrets.store.load_secrets", lambda: _load_secrets(root)))
+    masker.update(secrets.values())
+
+    contexts = _contexts(root, event, secrets)
+    plan = build_plan(workflow, contexts)
+    if job is not None:
+        plan = _only(plan, job)
+    if verbose:
+        _echo_plan(plan)
+
+    # The layout is created here rather than inside `run_plan` because its
+    # run_id is what names this run's log directory, and the sink needs that
+    # id before the first event is emitted.
+    layout = create(root)
 
     backend = _backend(root, project, workflow)
     options = RunOptions(
@@ -98,9 +99,9 @@ def run(
         event=event,
         max_workers=jobs or os.cpu_count(),
         masker=masker,
-        sink=_sink(verbose),
+        sink=_sink(layout, color=color_enabled(ctx)),
         contexts=contexts,
-        layout=create(root),
+        layout=layout,
     )
 
     try:
@@ -122,34 +123,44 @@ def _analyze(root: Path) -> Project:
     return analyze(root)
 
 
-def _load_secrets(root: Path) -> dict[str, str]:
-    """Dev D's store (D21). `secrets/store.py` is currently an empty file, so
-    the function may not exist at all — hence getattr rather than a plain
-    import, which would be an ImportError at module load and would take the
-    whole command down."""
-    import yeet.secrets.store as store
+def _load_secrets(root: Path, overrides: dict[str, str]) -> dict[str, str]:
+    """Everything `secrets/store.py` can find, plus `--secret` on top.
 
-    loader = getattr(store, "load_secrets", None)
-    if loader is None:
-        raise NotImplementedError("secrets.store.load_secrets")
-    loaded: dict[str, str] = loader(root, {})
-    return loaded
+    A locked store is not fatal: most workflows need no secrets, and refusing
+    to run because a passphrase is absent would make the encryption everyone's
+    problem rather than only the problem of people who use it. It is said out
+    loud, though — a run that silently masked nothing would be worse than
+    either. `--secret` values still apply in that case.
+    """
+    from yeet.secrets.store import SecretsError, SecretsLocked, load_secrets
+
+    try:
+        return load_secrets(root, overrides)
+    except SecretsLocked as exc:
+        typer.secho(
+            f"{exc} Running with --secret values and .env only.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+    except SecretsError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+    return dict(overrides)
 
 
-def _contexts(root: Path, event: str) -> Contexts:
-    """Dev B's contexts. Always a Contexts — an empty one is still usable.
+def _contexts(root: Path, event: str, secrets: dict[str, str]) -> Contexts:
+    """The evaluation contexts for `${{ }}`.
 
-    A missing `build_github_context` costs us the `github.*` values, not the
-    ability to run: `interpolate` degrades loudly on the expressions it cannot
-    evaluate and the rest of the workflow proceeds. That is what keeps the
-    walking skeleton meaningful before B5 lands.
+    `secrets` is passed in rather than left empty: `Contexts` has had the field
+    since B5, but nothing populated it, so `${{ secrets.NPM_TOKEN }}` evaluated
+    to nothing and a step's `drip:`/`env:` got an empty string. The values were
+    reaching the `Masker` (so nothing leaked) and never reaching the workflow —
+    which looks exactly like a masking success until you check the exit code of
+    the thing that needed the token.
     """
     contexts = Contexts(env=dict(os.environ))
     contexts.root = root
-    try:
-        contexts.github = dict(build_github_context(root, event))
-    except NotImplementedError:
-        contexts.github = {"event_name": event, "workspace": str(root)}
+    contexts.github = dict(build_github_context(root, event))
+    contexts.secrets = dict(secrets)
     return contexts
 
 
@@ -170,66 +181,33 @@ def _backend(root: Path, project: Project, workflow: Workflow) -> Backend:
     return DockerBackend(root, project=project)
 
 
-def _sink(verbose: bool) -> LogSink:
-    """Dev D's live tree, plus a plain-text fallback and room for D23's store.
+def _sink(layout: RunLayout, *, color: bool) -> LogSink:
+    """The live tree, and the JSONL store that makes `yeet logs` work.
 
-    FanOut counts a failing sink instead of raising, so an unimplemented
-    `RunConsole.emit` costs us the pretty output and nothing else — the run
-    still completes and still reports. `EchoSink` means there IS still output
-    in the meantime, which is what makes the executor demonstrable today.
+    §3.2's fan-out, finally both halves of it: `RunStore` was written (D23) and
+    `yeet logs` reads it (D24), but nothing had ever constructed one, so every
+    run left `.yeet/runs/` empty and `logs` always answered "no run logs found".
+
+    FanOut counts a failing sink instead of raising, so a full disk costs us the
+    replay and not the run.
+
+    Note what is NOT filtered here: `META` events. They carry "skipped (not the
+    vibe)", "timed out", and "flopped but `delulu: true` — carrying on", which
+    is precisely what a user needs to see. `-v` prints the plan up front
+    instead of hiding half the run's commentary behind a flag.
     """
-    return FanOut(sinks=[RunConsole(), EchoSink(verbose=verbose)])
+    return FanOut(sinks=[RunConsole(color=color), RunStore(layout.root, layout.run_id)])
 
 
-class EchoSink:
-    """A `core.events.LogSink` that just prints. Temporary, and deliberately so.
-
-    It exists because `reporting.console.RunConsole` (Dev D, D6) is still a
-    stub: without it a run produces a container full of output and an empty
-    terminal. Delete it when D6 lands.
-    """
-
-    def __init__(self, *, verbose: bool = False) -> None:
-        self.verbose = verbose
-
-    def emit(self, event: LogEvent) -> None:
-        if event.stream == META and not self.verbose:
-            return
-        prefix = f"  {event.job} · " if event.job else "  "
-        typer.echo(f"{prefix}{event.text}")
+def _echo_plan(plan: ExecutionPlan) -> None:
+    """`-v`: what we are about to do, before we do it."""
+    total = sum(len(wave) for wave in plan.waves)
+    typer.echo(f"plan: {total} job instance(s) in {len(plan.waves)} wave(s)", err=True)
+    for number, wave in enumerate(plan.waves, start=1):
+        typer.echo(f"  wave {number}: {', '.join(inst.key for inst in wave)}", err=True)
 
 
 # --- helpers -----------------------------------------------------------------
-
-
-def _stage(name: str, owner: str, call: Callable[[], T]) -> T:
-    """Run one pipeline stage, or explain who owes us it.
-
-    DELETE THE WRAPPER AT YOUR STAGE'S CALL SITE when you implement it.
-    """
-    try:
-        return call()
-    except NotImplementedError as exc:
-        typer.secho(
-            f"`yeet run` needs {name}, which is not implemented yet — owner: {owner}.\n"
-            "See plan.md. The executor itself is ready; this is the seam above it.",
-            fg=typer.colors.YELLOW,
-            err=True,
-        )
-        raise typer.Exit(EXIT_NOT_READY) from exc
-
-
-def _stage_optional(name: str, call: Callable[[], dict[str, str]]) -> dict[str, str]:
-    """Same, for a stage we can do without. Missing secrets are not fatal."""
-    try:
-        return call()
-    except NotImplementedError:
-        typer.secho(
-            f"{name} is not implemented yet — only --secret values will be masked.",
-            fg=typer.colors.YELLOW,
-            err=True,
-        )
-        return {}
 
 
 def _pick_flow(project: Project, flow: str | None) -> Path:
@@ -258,11 +236,7 @@ def _gate(bag: DiagnosticBag, source: Path) -> None:
     from yeet.reporting.render import render_diagnostics
 
     if len(bag):
-        try:
-            typer.echo(render_diagnostics(bag), err=True)
-        except NotImplementedError:
-            for diagnostic in bag.sorted():
-                typer.echo(str(diagnostic), err=True)
+        typer.echo(render_diagnostics(bag), err=True)
     if bag.has_errors():
         typer.secho(
             f"{len(bag.errors)} error(s) in {source} — refusing to run.",

@@ -139,3 +139,109 @@ Defects found (all "delete-the-seam" items unexecuted after the seams landed):
 1. All five _stage/_stage_optional wrappers + EchoSink still in cmd_run.py even though every stage they guard (analyze, validate_file, build_plan, RunConsole.emit, load_secrets) is now real — the "not implemented yet, owner: Dev X" messages would now mislead.
 2. EXIT_NOT_READY=1 collides with EXIT_JOB_FAILED=1 — duplicate name/value.
 3. interpolate.py's degradation path is dead code now that Dev B's evaluator exists.
+
+# session-5 work — integration pass
+
+Not a subsystem session. This one connected the four that already existed,
+closed every carried-over defect listed above, and added the missing docs.
+
+## Status of every defect previously recorded in this file
+
+| From | Defect | Status |
+|---|---|---|
+| s1 #1 | `cmd_run`'s five `_stage` wrappers + `EchoSink` outlived their seams | **fixed** — removed |
+| s1 #2 | `EXIT_NOT_READY=1` collides with `EXIT_JOB_FAILED=1` | **fixed** — deleted |
+| s1 #3 | `interpolate.py`'s degradation path is dead | **fixed** — `except NotImplementedError` gone; `Degradation` kept for the real `contexts=None` case, note reworded |
+| s1 #4 | `env.py::github_env` has no call site | **still open** — Dev C/B hand-off, unchanged |
+| s2 #1 | Layer-4 lints never fire (`RULES` empty) | **fixed** — package `__init__` imports the five rule modules; 5 regression tests incl. a subprocess check |
+| s2 #2 | `yeet check` does nothing end to end | **fixed** — was the missing dialect pass; now clean-exits on the walking skeleton |
+| s2 #3 | secrets stored in plaintext JSON | **fixed** — Fernet + scrypt; `keyring` optional, not a new dep |
+| s2 #4 | codes.py semantics drift | **fixed** — E206/E208/E313/E314/W319 titles corrected against the implementations |
+| s2 #5 | `run_lints` docstring wrong about `--strict`; `pipeline.py` swallows exceptions | **fixed** — docstring corrected; both now report `YEET-E900` |
+| s2 #6 | watcher is a polling loop, wrong signatures, `print()` | **fixed** — watchdog + debounce + lock; `watch(paths, on_change)` per §4; 22 tests |
+| s3 #1 | codes.py titles contradict layer2/resolver | **fixed** — same as s2 #4 |
+| s3 #2 | Layer-4 lints dead at runtime | **fixed** — same as s2 #1 |
+| s3 #3 | `cmd_scan` unreachable branch; `pipeline` swallows | **fixed** |
+| s4 #1 | tree committed without `make fix`; gate red at HEAD | **fixed** — and `make check` now includes `format`, which is why it drifted |
+| s4 #2 | test-count claims diverged from HEAD | n/a — counts in session-5 were run, not quoted |
+| s4 #3 | `cmd_graph`'s "parser is not ready" fallback unreachable | **fixed** — removed |
+| s4 #4 | carried-over: lints, swallowing, code titles | **fixed** |
+
+## New defects found this session (all fixed)
+
+1. **`aliases.normalize()` had no call site.** The dialect — the project's
+   headline feature — failed its own validator with 5 errors on the exact
+   workflow in plan.md §6. Four sessions of review missed it because the golden
+   tests call `normalize()` by hand, so the unit tests were green throughout.
+2. **`RunStore` was never constructed.** `yeet logs` always answered "no run
+   logs found"; §3.2's fan-out had only its console half.
+3. **W403 fired on `runs-on: ubuntu-latest`** — a runner label, not an image
+   tag. Would have fired on almost every real-world workflow, i.e. on the
+   compatibility corpus we intend to demo.
+4. **The `post-commit` hook shim passed `--sha`, which `yeet run` does not
+   accept.** Every commit would have errored; D27 could not have passed.
+5. **`hooks install` clobbered pre-existing user hooks** with no check.
+6. **CI had never run**: `.github/workflows/` was inside `yeet/`, and GitHub
+   only discovers workflows at the repo root. It would also have failed at
+   `pip install -e .` (no root `pyproject.toml`).
+7. **`RunConsole` emitted the group header before the job header.**
+8. **`${{ secrets.X }}` always evaluated to empty.** `Contexts.secrets`
+   existed but `cmd_run` never populated it, so secret values reached the
+   `Masker` and never the evaluator. A step's `drip: {TOKEN: ${{ secrets.T }}}`
+   got an empty string. This is the nastiest of the set, because the symptom
+   — no secret in the log — is exactly what success looks like.
+
+## Still open, deliberately
+
+- `env.py::github_env` has no call site (s1 #4) — the executor's `GITHUB_*` env
+  and Dev B's `github` context are still not wired to each other.
+- Layer-3 codes E304–E308, E313–E317, W318 registered but unimplemented;
+  `layer3_semantic.py`'s docstring names them.
+- `tests/corpus/` empty — the "% of syntax supported" metric has no inputs.
+- C15/C16 (Docker actions, JS actions) remain seams; `steps.py` marks such steps
+  SKIPPED rather than pretending they passed.
+- `docs/architecture.md` has drifted; `docs/handbook.md` is now the front door.
+
+## Verification
+
+Every claim above was run, not asserted:
+
+    make check       all gates green
+    pytest           671 passed, 18 deselected (docker)
+    mypy src         101 files, strict, clean
+    lint-imports     2 contracts kept, 0 broken
+
+and end to end on a scratch repo, both spellings:
+`yeet scan` → `yeet check` (exit 0) → `yeet graph` → `yeet run` (exit 0,
+"we are so back") → `yeet logs` (replays it) → `yeet secrets set` (ciphertext on
+disk, value absent from the file).
+
+
+
+
+
+  # DEV-C 
+  — fix the context plumbing. Highest value in the repo. Thread a per-instance Contexts through runner.py →
+  StepLoopConfig: matrix from inst.leg, needs from upstream JobResults, env layered workflow → job → step over
+  os.environ, steps from the step_outputs dict that's already tracked. Then wire github_env at the same call site
+  and close a 5-session-old thread. Add an e2e test asserting a matrix leg prints its own value — that's the
+  tripwire that would have caught this.
+
+  # DEV-A 
+  — decide loot/stash. Either implement (IR fields + schema + builder) or cut them from aliases.yml and the
+  handbook. Shipping a documented feature that errors is worse than not having it. Then fill tests/corpus/ with 5–10
+  real OSS workflows and turn it into a parametrized "parses without E1xx/E2xx" test — that's your demo metric, and
+  it'll find schema holes nothing else will.
+
+  # DEV-B 
+  — finish Layer 3. E304–E308, E313–E317, W318, one invalid fixture each. Highest-value: E307 missing-secret
+  and E316/E317. This is the layer that makes check look thorough on a stranger's repo.
+
+  # DEV-D
+   — commit the work and get CI green. Commit those 41 files today, push, watch the 3-OS matrix actually run,
+  fix what Windows breaks (it will — paths and CRLF). Then fix the console double-rendering: in my matrix run, test 
+  (node 16) printed its header three times. Cosmetic, but it's the money shot of the demo.
+
+  Everyone: the handbook's rule — when you finish a module, grep for its call site — is the single most valuable
+  sentence in your docs, and the matrix bug is the fourth violation of it. Make it a PR checklist item, not a
+  paragraph.

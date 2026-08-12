@@ -363,9 +363,7 @@ def _unsupported_events(data: Any, path: Path, bag: DiagnosticBag) -> None:
     else:
         return
 
-    supported = ", ".join(
-        sorted(SUPPORTED_EVENTS - {"manual"}, key=lambda e: (e != "push", e))
-    )
+    supported = ", ".join(sorted(SUPPORTED_EVENTS - {"manual"}, key=lambda e: (e != "push", e)))
     for name in names:
         if not isinstance(name, str) or name in SUPPORTED_EVENTS:
             continue
@@ -379,10 +377,6 @@ def _unsupported_events(data: Any, path: Path, bag: DiagnosticBag) -> None:
                 message=f"unsupported event `{name}`",
                 file=path,
                 pos=pos,
-                help=(
-                    f"did you mean `{suggestion}`?"
-                    if suggestion
-                    else f"supported: {supported}"
-                ),
+                help=(f"did you mean `{suggestion}`?" if suggestion else f"supported: {supported}"),
             )
         )

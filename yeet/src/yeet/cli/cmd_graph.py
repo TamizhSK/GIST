@@ -95,10 +95,8 @@ def _flows(target: Path) -> list[Path]:
 
 
 def _render_diagnostics(bag: DiagnosticBag) -> None:
+    """`render_diagnostics` has its own `str(diagnostic)` fallback inside it
+    (D5, risk #8), so there is nothing to catch here."""
     from yeet.reporting.render import render_diagnostics
 
-    try:
-        typer.echo(render_diagnostics(bag), err=True)
-    except NotImplementedError:
-        for diagnostic in bag.sorted():
-            typer.echo(str(diagnostic), err=True)
+    typer.echo(render_diagnostics(bag), err=True)

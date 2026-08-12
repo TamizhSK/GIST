@@ -33,7 +33,7 @@ CASES: list[tuple[str, list[tuple[str, object]]]] = [
         ],
     ),
     ("matrix['node']", [(ID, "matrix"), ("[", None), (STR, "node"), ("]", None)]),
-    ('a[0]', [(ID, "a"), ("[", None), (NONE, 0), ("]", None)]),
+    ("a[0]", [(ID, "a"), ("[", None), (NONE, 0), ("]", None)]),
     ("f(a, b)", [(ID, "f"), ("(", None), (ID, "a"), (",", None), (ID, "b"), (")", None)]),
     ("!x", [("!", None), (ID, "x")]),
     ("a && b || c", [(ID, "a"), ("&&", None), (ID, "b"), ("||", None), (ID, "c")]),

@@ -75,6 +75,7 @@ def test_splat_flattens_mapping_values():
 
 # --- truthiness --------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "value,expected",
     [

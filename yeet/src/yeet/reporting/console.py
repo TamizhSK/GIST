@@ -41,12 +41,31 @@ class RunConsole:
     def emit(self, event: LogEvent) -> None:
         text = event.text.rstrip("\r\n")
 
-        # Handle workflow directives
+        # Headers FIRST, directives second. The executor opens a `::group::` as
+        # the first event of every step, so handling directives first meant the
+        # very first thing a run printed was a group header floating above the
+        # job it belonged to:
+        #
+        #     ▼ say hi          <- group, printed before its own job
+        #     ● build [cooked]
+        #       ├─ ● say hi
+        #
+        # Tracking the job/step header before the early `return` puts the tree
+        # back in the order the guide draws it.
+        self._headers(event)
+
         if text.startswith("::group::"):
             group_name = text[len("::group::") :].strip()
-            indent = "  " * self._group_depth
-            group_header = colorize(f"▼ {group_name}", Colors.BOLD + Colors.CYAN, color=self.color)
-            self._print(f"{indent}{group_header}")
+            # `steps.py` names the group after the step, so a group header here
+            # would just repeat the step header printed a moment ago. Track the
+            # depth, print nothing. A group the user opened themselves inside a
+            # `run:` block has a different name, and does get a header.
+            if group_name != event.step:
+                indent = "  " * (self._group_depth + 2)
+                group_header = colorize(
+                    f"▼ {group_name}", Colors.BOLD + Colors.CYAN, color=self.color
+                )
+                self._print(f"{indent}{group_header}")
             self._group_depth += 1
             return
         elif text == "::endgroup::":
@@ -54,10 +73,23 @@ class RunConsole:
                 self._group_depth -= 1
             return
 
-        # Track active job and step headers
+        indent = "  " * (self._group_depth + 2)
+
+        if event.stream == STDERR:
+            formatted_text = colorize(text, Colors.RED, color=self.color)
+            self._print(f"{indent}{formatted_text}")
+        elif event.stream == META:
+            formatted_text = colorize(text, Colors.DIM + Colors.ITALIC, color=self.color)
+            self._print(f"{indent}{formatted_text}")
+        else:
+            self._print(f"{indent}{text}")
+
+    def _headers(self, event: LogEvent) -> None:
+        """Print the job and step headers when either changes."""
         if event.job != self._current_job:
             self._current_job = event.job
             self._current_step = None
+            self._group_depth = 0
             job_hdr = colorize(
                 f"{SYMBOL_RUNNING} {event.job}", Colors.BOLD + Colors.BLUE, color=self.color
             )
@@ -70,17 +102,6 @@ class RunConsole:
                 f"  ├─ {SYMBOL_RUNNING} {event.step}", Colors.CYAN, color=self.color
             )
             self._print(step_hdr)
-
-        indent = "  " * (self._group_depth + 2)
-
-        if event.stream == STDERR:
-            formatted_text = colorize(text, Colors.RED, color=self.color)
-            self._print(f"{indent}{formatted_text}")
-        elif event.stream == META:
-            formatted_text = colorize(text, Colors.DIM + Colors.ITALIC, color=self.color)
-            self._print(f"{indent}{formatted_text}")
-        else:
-            self._print(f"{indent}{text}")
 
     def _print(self, msg: str) -> None:
         try:

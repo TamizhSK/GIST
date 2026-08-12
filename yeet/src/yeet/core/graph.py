@@ -73,9 +73,7 @@ def topo_waves(deps: Deps) -> list[list[str]]:
             if needed in deps:
                 dependents.setdefault(needed, []).append(node)
 
-    indegree = {
-        node: sum(1 for needed in needs if needed in deps) for node, needs in deps.items()
-    }
+    indegree = {node: sum(1 for needed in needs if needed in deps) for node, needs in deps.items()}
     ready = [node for node in deps if indegree[node] == 0]
     waves: list[list[str]] = []
     placed = 0

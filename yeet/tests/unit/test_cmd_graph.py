@@ -38,9 +38,7 @@ def test_render_plan_shows_waves_and_needs() -> None:
 def test_render_plan_empty() -> None:
     wf = make_workflow({}, name="empty")
     plan = build_plan(wf, Contexts())
-    assert render_plan(wf, plan) == (
-        "flow: empty\n0 job instance(s) in 0 wave(s)\n"
-    )
+    assert render_plan(wf, plan) == ("flow: empty\n0 job instance(s) in 0 wave(s)\n")
 
 
 def test_flows_prefers_dot_yeet_over_github(tmp_path: Path) -> None:
