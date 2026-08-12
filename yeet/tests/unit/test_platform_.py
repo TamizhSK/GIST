@@ -89,3 +89,41 @@ def test_docker_hint_is_platform_specific(monkeypatch):
 
     monkeypatch.setattr(platform_, "is_wsl", lambda: True)
     assert "WSL" in platform_.docker_host_hint()
+
+
+def test_bash_on_windows_is_git_bash_not_the_wsl_launcher(monkeypatch, tmp_path):
+    """`bash` on a stock Windows box is `C:\\Windows\\System32\\bash.exe`.
+
+    That is the WSL launcher, not a shell. With no distribution installed it
+    prints "Windows Subsystem for Linux has no installed distributions" — in
+    UTF-16 — and exits non-zero, so a `shell: bash` step fails with a message
+    about Linux distributions that has nothing to do with the workflow. This is
+    what reddened windows-latest after the `.ps1` fix landed.
+    """
+    git_bash = tmp_path / "Git" / "bin" / "bash.exe"
+    git_bash.parent.mkdir(parents=True)
+    git_bash.write_text("")
+
+    monkeypatch.setattr(platform_, "is_windows", lambda: True)
+    monkeypatch.setattr(platform_, "GIT_BASH_CANDIDATES", (str(git_bash),))
+
+    assert platform_.shell_executable("bash") == str(git_bash)
+    assert platform_.shell_executable("sh") == str(git_bash)
+
+
+def test_shell_executable_only_rewrites_posix_shells_on_windows(monkeypatch):
+    monkeypatch.setattr(platform_, "is_windows", lambda: True)
+    monkeypatch.setattr(platform_, "GIT_BASH_CANDIDATES", ())
+    monkeypatch.setattr(platform_.shutil, "which", lambda _name: None)
+
+    # pwsh is a real program on Windows and must be left alone.
+    assert platform_.shell_executable("pwsh") == "pwsh"
+    # No Git Bash anywhere: return the bare name so the failure is the user's
+    # PATH rather than a path we invented.
+    assert platform_.shell_executable("bash") == "bash"
+
+
+def test_shell_executable_is_a_noop_off_windows(monkeypatch):
+    monkeypatch.setattr(platform_, "is_windows", lambda: False)
+    assert platform_.shell_executable("bash") == "bash"
+    assert platform_.shell_executable("sh") == "sh"

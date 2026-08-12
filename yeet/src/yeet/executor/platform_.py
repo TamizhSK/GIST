@@ -14,8 +14,26 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 import sys
 from pathlib import Path
+
+POSIX_SHELLS = ("bash", "sh")
+
+GIT_BASH_CANDIDATES = (
+    r"C:\Program Files\Git\bin\bash.exe",
+    r"C:\Program Files (x86)\Git\bin\bash.exe",
+)
+"""Where Git for Windows puts bash. Checked before anything on PATH.
+
+`C:\\Windows\\System32\\bash.exe` — which is what bare `bash` resolves to on a
+stock Windows box, and on GitHub's windows-latest runner — is the **WSL
+launcher**, not a shell. With no distribution installed it prints "Windows
+Subsystem for Linux has no installed distributions" (in UTF-16, to add insult)
+and exits non-zero, so every `shell: bash` step fails with a message about
+Linux distributions that has nothing to do with the workflow. GitHub Actions
+itself never invokes bare `bash` on Windows for exactly this reason.
+"""
 
 WSL_MARKER = "microsoft"
 """Both WSL1 and WSL2 put this in /proc/version. WSL2 writes `microsoft-standard`,
@@ -73,6 +91,32 @@ def docker_user() -> str | None:
     if getuid is None or getgid is None:  # pragma: no cover - non-POSIX without win32
         return None
     return f"{getuid()}:{getgid()}"
+
+
+def shell_executable(name: str) -> str:
+    """The program to actually exec for a shell name. Only Windows differs.
+
+    Returns `name` unchanged everywhere except Windows + `bash`/`sh`, where
+    bare `bash` is System32's WSL launcher rather than a shell — see
+    GIT_BASH_CANDIDATES. Git for Windows is looked for in its two install
+    locations, then derived from `git` on PATH (`…/cmd/git.exe` ->
+    `…/bin/bash.exe`), and only then do we give up and return the bare name so
+    the failure is the user's PATH rather than ours.
+    """
+    if not is_windows() or name not in POSIX_SHELLS:
+        return name
+
+    for candidate in GIT_BASH_CANDIDATES:
+        if Path(candidate).is_file():
+            return candidate
+
+    git = shutil.which("git")
+    if git is not None:
+        bash = Path(git).parent.parent / "bin" / "bash.exe"
+        if bash.is_file():
+            return str(bash)
+
+    return name
 
 
 def runner_os() -> str:

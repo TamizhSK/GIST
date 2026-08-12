@@ -284,7 +284,10 @@ def test_a_timeout_is_reported_as_124(tmp_path):
 
 
 def test_the_script_on_disk_has_no_carriage_returns(tmp_path):
-    job = make_job(steps=[make_step("echo one\r\necho two")])
+    # `shell` is pinned so the filename is `.sh` on every platform. Left
+    # implicit, this test hardcoded `script.sh` while the Windows default
+    # resolves to pwsh and `.ps1` — it was asserting the old Windows bug.
+    job = make_job(steps=[make_step("echo one\r\necho two", shell="bash")])
     config = build_config(tmp_path, job)
     executor = FakeExec()
     run_steps(config, executor)
@@ -318,7 +321,7 @@ def test_on_windows_the_script_is_written_where_pwsh_can_run_it(tmp_path, monkey
     """
     from yeet.executor import script as script_mod
 
-    monkeypatch.setattr(script_mod, "is_windows", lambda: True)
+    monkeypatch.setattr(script_mod.platform_, "is_windows", lambda: True)
 
     job = make_job(steps=[make_step("echo hi")])
     config = build_config(tmp_path, job)
@@ -334,7 +337,7 @@ def test_on_windows_the_script_is_written_where_pwsh_can_run_it(tmp_path, monkey
 def test_on_posix_the_pair_is_bash_and_sh(tmp_path, monkeypatch):
     from yeet.executor import script as script_mod
 
-    monkeypatch.setattr(script_mod, "is_windows", lambda: False)
+    monkeypatch.setattr(script_mod.platform_, "is_windows", lambda: False)
 
     job = make_job(steps=[make_step("echo hi")])
     config = build_config(tmp_path, job)

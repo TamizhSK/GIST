@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from yeet.executor.platform_ import is_windows
+from yeet.executor import platform_
 
 DEFAULT_CONTAINER_SHELL = "bash"
 DEFAULT_POSIX_SHELL = "bash"
@@ -66,7 +66,7 @@ def resolve_shell(shell: str | None, *, in_container: bool) -> str:
         return name
     if in_container:
         return DEFAULT_CONTAINER_SHELL
-    return DEFAULT_WINDOWS_SHELL if is_windows() else DEFAULT_POSIX_SHELL
+    return DEFAULT_WINDOWS_SHELL if platform_.is_windows() else DEFAULT_POSIX_SHELL
 
 
 def shell_argv(shell: str | None, script_path: str, *, in_container: bool) -> list[str]:
@@ -75,8 +75,14 @@ def shell_argv(shell: str | None, script_path: str, *, in_container: bool) -> li
     In a container the default is always bash — we control the image, and the
     base image has it. On the host it depends on the platform, because Windows
     has neither bash nor a POSIX shell by default.
+
+    argv[0] goes through `shell_executable` so that `shell: bash` on Windows
+    reaches Git Bash rather than System32's WSL launcher. Inside a container it
+    is a no-op — the image is Linux and `bash` means bash there.
     """
     argv = list(_ARGV.get(resolve_shell(shell, in_container=in_container), ["bash", "-e"]))
+    if not in_container:
+        argv[0] = platform_.shell_executable(argv[0])
     argv.append(script_path)
     return argv
 

@@ -12,6 +12,11 @@ runs in CI on all three platforms. The Docker equivalents live in
 Why a subprocess and not `CliRunner`: exit codes and stream routing are half of
 the contract here, and they are the half that a direct function call would not
 check.
+
+Every fixture is written with `newline="\\n"`. Without it `Path.write_text`
+translates to CRLF on Windows, so the same fixture is a different file on a
+different OS and W006 (CRLF) fires on all of them — warnings that are noise
+here and could hide a real diagnostic in an assertion message.
 """
 
 from __future__ import annotations
@@ -81,7 +86,7 @@ def project(tmp_path: Path) -> Path:
     """A git repo containing the walking skeleton."""
     flows = tmp_path / ".yeet" / "flows"
     flows.mkdir(parents=True)
-    (flows / "main.yml").write_text(WALKING_SKELETON, encoding="utf-8")
+    (flows / "main.yml").write_text(WALKING_SKELETON, encoding="utf-8", newline="\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
     return tmp_path
 
@@ -111,7 +116,7 @@ def test_canonical_github_actions_syntax_also_runs(tmp_path: Path) -> None:
     """Superset, not replacement — plan.md §10."""
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
-    (workflows / "ci.yml").write_text(CANONICAL, encoding="utf-8")
+    (workflows / "ci.yml").write_text(CANONICAL, encoding="utf-8", newline="\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
 
     result = yeet("run", cwd=tmp_path)
@@ -138,6 +143,7 @@ def test_a_broken_workflow_is_refused_before_anything_runs(tmp_path: Path) -> No
         "    moves:\n"
         "      - bet: echo nope\n",
         encoding="utf-8",
+        newline="\n",
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
 
@@ -160,6 +166,7 @@ def test_a_failing_step_flops_with_a_nonzero_exit(tmp_path: Path) -> None:
         "    moves:\n"
         "      - bet: exit 3\n",
         encoding="utf-8",
+        newline="\n",
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
 
@@ -219,6 +226,7 @@ def test_a_secret_resolves_and_is_masked(tmp_path: Path) -> None:
         "        drip:\n"
         "          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}\n",
         encoding="utf-8",
+        newline="\n",
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
 
@@ -260,6 +268,7 @@ def test_a_matrix_leg_sees_its_own_value(tmp_path: Path) -> None:
         "    steps:\n"
         '      - run: echo "LEG=node${{ matrix.node }}"\n',
         encoding="utf-8",
+        newline="\n",
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
 
@@ -296,6 +305,7 @@ def test_env_reaches_the_step_at_every_level(tmp_path: Path) -> None:
         "        shell: bash\n"  # `$WF` is a shell variable, not PowerShell's `$env:WF`
         "        env: {STEP: from-step}\n",
         encoding="utf-8",
+        newline="\n",
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
 
@@ -336,6 +346,7 @@ def test_needs_carries_result_and_outputs_between_jobs(tmp_path: Path) -> None:
         "    steps:\n"
         '      - run: echo "R=${{ needs.build.result }} A=${{ needs.build.outputs.artifact }}"\n',
         encoding="utf-8",
+        newline="\n",
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
 
@@ -371,6 +382,7 @@ def test_the_github_context_and_the_github_env_vars_agree(project: Path) -> None
         '      - run: echo "SAME=$([ "${{ github.sha }}" = "$GITHUB_SHA" ] && echo yes)"\n'
         "        shell: bash\n",
         encoding="utf-8",
+        newline="\n",
     )
 
     result = yeet("run", cwd=project)
