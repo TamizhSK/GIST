@@ -651,3 +651,107 @@ ruff format: pass
 mypy strict: 101 files clean
 lint-imports: 2 kept, 0 broken
 pytest: 682 unit tests passed
+
+
+# session-7 — discovery, dialect, Layer 3, `uses:`, per-project Docker
+
+Five threads, one theme: things that were written, tested, and not reachable.
+
+## The gate was red at HEAD
+
+`make check` failed on mypy at the commit this session started from. The
+merge-conflict resolution in `e8177cb` ("fix:dev-d session 2.1 update") kept an
+orphaned `_win_pid_alive()` in `triggers/watcher.py` that reaches
+`ctypes.windll` directly — the exact spelling `platform_.pid_alive()` had
+replaced with `getattr(ctypes, "windll")` because no `# type: ignore` is green
+on all three OSes at once. The rest of that merge (`script.py::resolve_shell`)
+was resolved correctly, keeping both the single-resolution fix and the
+`shutil.which("pwsh")` fallback for a stock Windows box.
+
+## Flows are found wherever they live
+
+`analyzer/discover.py` matched a flow only as exactly three root-relative path
+segments. A monorepo package's own `.github/workflows/ci.yml`, a nested
+`.github/workflows/reusable/build.yml`, and a plain `workflows/ci.yml` were all
+invisible — `yeet scan` said "no flows found" on repos that visibly have them.
+
+Flow directories are now matched against the TAIL of any ancestor path:
+
+    .yeet/flows  >  .github/workflows (+ .gitea, .forgejo)
+                 >  bare workflows/ | flows/  >  root yeet.yml
+
+at any depth, any nesting beneath, `.yml` and `.yaml` alike. Two details are
+load-bearing: the depth cap is lifted once the walk is INSIDE a flow directory
+(or nested reusable workflows are truncated with no message), and ancestor
+matching is floored at the project root — without that, a project living at
+`~/workflows/myrepo` has every yaml file in it classified as a workflow.
+
+Ties break shallowest-first, so `yeet run` with no argument still picks the
+repo's own workflow over a vendored example three directories down.
+
+## Both spellings, everywhere — and the one case that cannot work
+
+Canonical GitHub Actions syntax and the dialect are accepted in every file in
+every directory, and mixed freely within one file. That already held, because
+the alias pass keys off CONTENT and never off the path; `test_discovery_layouts`
+now asserts the cross product rather than leaving it to chance.
+
+What did not work: the same key in both spellings. `normalize()` is a
+pop-and-reinsert, so `name:` beside `vibe:` dropped one silently and ran a
+workflow the user did not write, with zero diagnostics. **E106** refuses it,
+and covers alias-vs-alias (`bet:` and `cook:` are both `run`).
+
+## Layer 3 finished
+
+E304, E305, E306, E307, E308, E316, W318 — every one of them already had a row
+in `codes.py`, a line in `docs/rules.md` and an entry in `yeet explain`, so the
+tool documented checks it did not perform.
+
+Three needed a decision rather than an implementation:
+
+- **E304** was registered as "duplicate job id", which cannot occur: jobs is a
+  dict and two `build:` keys are caught by E102 at layer 1. Retitled to
+  "duplicate step id", the reachable version of the same mistake.
+- **E307** needs data Layer 3 cannot reach (the store is tier 5, validation is
+  tier 3). It is a pure function over a set of names; `cmd_run` owns the store
+  and passes them in.
+- **E316** is deliberately narrow — blank or whitespace only. Any string is a
+  legal runner label on GitHub, so "we do not recognise it" stays E315 at run
+  time, per job, where it can say `macos-latest is not supported` instead of
+  rejecting a file and stopping the linux jobs in it too.
+
+## `uses:` runs
+
+`steps.py` marked every `uses:` step SKIPPED with "needs actions.resolver
+(Dev A, A17)". A17 landed four sessions earlier. Now: composite actions are
+inlined (`with:` -> `INPUT_*`), `upload-artifact`/`download-artifact`/`cache`
+are implemented against `storage/`, and docker/node actions are skipped with a
+message that names the kind and the reason.
+
+The tier rule forbids `executor -> storage`, so this uses the pattern ADR 0007
+already names for it: `core/builtins.py` at tier 0, `storage/builtin.py` for
+the implementation, `cmd_run` wiring them together — the same shape as
+`LogSink` and `Masker`.
+
+## Per-project Docker
+
+- Image preparation is serialised per reference. A five-leg matrix is five jobs
+  and ONE image, and all five used to pull it. Verified live: three legs, one
+  `pulling python:3.12`.
+- `project_slug` = `<dirname>-<hash8>` of the absolute path, shared by image
+  tags and container names, so `~/work/api` and `~/oss/api` stop sharing.
+- Containers carry `yeet.project`/`run`/`job` labels; `yeet prune` is
+  project-scoped by default and removes containers before images.
+- A project with no Dockerfile and no `runs-on` uses the image its own
+  fingerprint implies instead of a hard E315.
+
+## Verification
+
+    make check        787 passed, all gates green
+    pytest -m docker  18 passed against a live daemon
+    corpus            9/9 real OSS workflows validate with zero errors (was 6/9)
+
+Live, end to end: four layouts x both dialects all run; a composite action
+runs; a cache misses, then hits, then skips the install step behind
+`cache-hit != 'true'`; an artifact crosses between jobs; a missing secret
+refuses the run with a code frame before any container exists.

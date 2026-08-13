@@ -509,3 +509,100 @@ Answering your question directly
 
   Remaining C items: C15/C16 (docker_action.py and js_action.py are still empty files), and the executor half of
   loot:/stash:, which is blocked on DEV-A adding the IR fields and schema keys first.
+
+# session-7 work — the unreachable-module class, again
+
+## The pattern this session kept finding
+
+Six times now a module has been written, unit-tested, reviewed, and never
+called. The handbook already names the rule (§6: when you finish a module, grep
+for its call site) and it has been broken once per session since it was
+written:
+
+| # | Module | Found in | Symptom while broken |
+|---|---|---|---|
+| 1 | `aliases.normalize()` | s5 | the dialect failed its own validator |
+| 2 | `RunStore` | s5 | `yeet logs` never found a run |
+| 3 | L4 lint rules | s2/s5 | `RULES` empty, `yeet check` printed nothing |
+| 4 | `Contexts` fields | s6 | `${{ matrix.x }}` empty in every leg |
+| 5 | `actions/resolver` | **s7** | every `uses:` step SKIPPED |
+| 6 | `storage/artifacts`, `storage/cache` | **s7** | `uses: actions/cache` did nothing |
+
+In every case the unit tests were green throughout, because a test that calls
+the module directly cannot notice that nothing else does. #5 and #6 are the
+same shape as #1: the test performed the step the product had forgotten.
+
+`tests/unit/test_invalid_fixtures.py` was itself an instance — it composed
+loader -> aliases -> layer2 -> builder by hand. It drives `validate_file` now.
+
+## Defects fixed that were only reachable once the code was
+
+Both storage modules were wrong in ways nothing could have caught while they
+had no callers:
+
+1. **restore-keys did no prefix matching** — the entire point of the feature.
+   It hashed each restore key and looked for that exact hash; hashing destroys
+   prefixes, so a restore key only ever hit when it exactly equalled the key
+   that saved the entry.
+2. **`arcname=p.name` flattened cached paths** — `src/dist` and `web/dist` both
+   became `dist`, and restoring either wrote over the workspace root.
+3. **`extractall` without `filter="data"`** — path traversal out of the
+   destination. A cache tarball is attacker-controlled the moment a cache
+   directory is shared.
+4. **`path: dist/**` stored nothing** — a trailing `**` matches directories
+   only in Python's glob, and that is the most common upload-artifact line in
+   existence.
+
+## Bugs the real-world corpus found
+
+The corpus earned its keep twice in one session:
+
+1. **E305 was wrong for about ten minutes.** Shipped as the POSIX
+   shell-identifier rule; running it over `tests/corpus/` fired 14 times on
+   curl's workflow. `env: {cache-name: ...}` read back as
+   `${{ env.cache-name }}` is the example in GitHub's OWN caching docs — the
+   `env` context is a map lookup, not a shell export. Narrowed to names that
+   cannot work anywhere (empty, whitespace, `=`).
+2. **E303 rejected an include-only matrix**, and `planner/matrix.py` had the
+   same blind spot with teeth: `expand()` returned early on an empty `matrix`
+   before it ever looked at `include`, so those legs collapsed into ONE
+   unparameterised job. Flask's nine Python versions planned as a single leg
+   that tested whatever `python` was on the runner — and reported success.
+   Three of the nine corpus workflows use this shape.
+
+Corpus went from 6/9 to 9/9 validating with zero errors.
+
+## Still open
+
+- **C15/C16** — `actions/docker_action.py` and `js_action.py` are still empty.
+  A `uses:` pointing at one is now skipped with a message naming the kind and
+  the reason, rather than naming a developer, but they do not run.
+- **Remote actions** (`owner/repo@ref`) resolve through A20's shallow clone
+  only if the action is composite; `actions/checkout@v4` is a node action and
+  is therefore skipped. In practice the three built-ins plus local composites
+  cover most of what a local run needs, but `checkout` being a no-op deserves a
+  word in the docs — the workspace is already the repo, so it is harmless here.
+- **W317** ("deprecated workflow syntax") is registered and unimplemented — the
+  last one in the Layer 3 block.
+- **Built-ins run on the host, not in the job's container.** Deliberate and
+  documented: the workspace is a bind mount, so the host sees the bytes the
+  container just wrote. It would matter for an artifact path that only exists
+  inside the image.
+- **`yeet prune --all`** is the only way to reach another project's images now
+  that pruning is project-scoped. That is the right default but it means an old
+  `yeet-local/<name>:<hash>` tagged before this session (no path hash) is only
+  removable with `--all`.
+- **The runner's terminal UI** is another developer's thread; `reporting/` was
+  left untouched this session on purpose, including the known duplicate
+  job-header on matrix legs.
+
+## Verification
+
+    make check        787 passed, all six gates green
+    pytest -m docker  18 passed against a live daemon
+    make rules-check  docs/rules.md matches codes.py
+
+Every claim above was run. The two matrix/E303 fixes were checked by breaking
+them: reverting `expand()` fails
+`test_an_include_only_matrix_gives_one_leg_per_entry`, and the concurrency lock
+has a five-thread test that fails without it.
