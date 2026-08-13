@@ -33,11 +33,38 @@ def test_container_default_is_bash_with_pipefail():
 
 
 def test_local_default_follows_the_host(monkeypatch):
-    monkeypatch.setattr(script, "is_windows", lambda: True)
+    monkeypatch.setattr(script.platform_, "is_windows", lambda: True)
     assert script.shell_argv(None, "s.ps1", in_container=False)[0] == "pwsh"
 
-    monkeypatch.setattr(script, "is_windows", lambda: False)
+    monkeypatch.setattr(script.platform_, "is_windows", lambda: False)
     assert script.shell_argv(None, "s.sh", in_container=False)[0] == "bash"
+
+
+def test_the_suffix_matches_the_shell_that_will_run_it(monkeypatch):
+    """The Windows regression, and the invariant that was never asserted.
+
+    `shell_argv` applied the platform default and `script_suffix` did not, so a
+    step with no `shell:` on Windows was written to `step_1.sh` and handed to
+    `pwsh -File` — which takes `.ps1` only. Every job flopped, and the project's
+    first-ever CI run went red on windows-latest and nowhere else.
+
+    The test above passed throughout, because it only ever checked argv. The
+    two answers have to be checked TOGETHER or the pair can drift again.
+    """
+    monkeypatch.setattr(script.platform_, "is_windows", lambda: True)
+    assert script.shell_argv(None, "s", in_container=False)[0] == "pwsh"
+    assert script.script_suffix(None, in_container=False) == ".ps1"
+
+    monkeypatch.setattr(script.platform_, "is_windows", lambda: False)
+    assert script.shell_argv(None, "s", in_container=False)[0] == "bash"
+    assert script.script_suffix(None, in_container=False) == ".sh"
+
+
+def test_a_container_step_is_bash_even_on_a_windows_host(monkeypatch):
+    """The image is Linux whatever the host is, so the pair must be bash/.sh."""
+    monkeypatch.setattr(script.platform_, "is_windows", lambda: True)
+    assert script.shell_argv(None, "/workspace/s", in_container=True)[0] == "bash"
+    assert script.script_suffix(None, in_container=True) == ".sh"
 
 
 @pytest.mark.parametrize(
@@ -51,7 +78,7 @@ def test_local_default_follows_the_host(monkeypatch):
 )
 def test_explicit_shell_is_honoured(shell, first, suffix):
     assert script.shell_argv(shell, "s", in_container=True)[0] == first
-    assert script.script_suffix(shell) == suffix
+    assert script.script_suffix(shell, in_container=True) == suffix
 
 
 def test_the_script_path_is_always_last():

@@ -89,3 +89,69 @@ def test_docker_hint_is_platform_specific(monkeypatch):
 
     monkeypatch.setattr(platform_, "is_wsl", lambda: True)
     assert "WSL" in platform_.docker_host_hint()
+
+
+def test_bash_on_windows_is_git_bash_not_the_wsl_launcher(monkeypatch, tmp_path):
+    """`bash` on a stock Windows box is `C:\\Windows\\System32\\bash.exe`.
+
+    That is the WSL launcher, not a shell. With no distribution installed it
+    prints "Windows Subsystem for Linux has no installed distributions" — in
+    UTF-16 — and exits non-zero, so a `shell: bash` step fails with a message
+    about Linux distributions that has nothing to do with the workflow. This is
+    what reddened windows-latest after the `.ps1` fix landed.
+    """
+    git_bash = tmp_path / "Git" / "bin" / "bash.exe"
+    git_bash.parent.mkdir(parents=True)
+    git_bash.write_text("")
+
+    monkeypatch.setattr(platform_, "is_windows", lambda: True)
+    monkeypatch.setattr(platform_, "GIT_BASH_CANDIDATES", (str(git_bash),))
+
+    assert platform_.shell_executable("bash") == str(git_bash)
+    assert platform_.shell_executable("sh") == str(git_bash)
+
+
+def test_shell_executable_only_rewrites_posix_shells_on_windows(monkeypatch):
+    monkeypatch.setattr(platform_, "is_windows", lambda: True)
+    monkeypatch.setattr(platform_, "GIT_BASH_CANDIDATES", ())
+    monkeypatch.setattr(platform_.shutil, "which", lambda _name: None)
+
+    # pwsh is a real program on Windows and must be left alone.
+    assert platform_.shell_executable("pwsh") == "pwsh"
+    # No Git Bash anywhere: return the bare name so the failure is the user's
+    # PATH rather than a path we invented.
+    assert platform_.shell_executable("bash") == "bash"
+
+
+def test_shell_executable_is_a_noop_off_windows(monkeypatch):
+    monkeypatch.setattr(platform_, "is_windows", lambda: False)
+    assert platform_.shell_executable("bash") == "bash"
+    assert platform_.shell_executable("sh") == "sh"
+
+
+def test_pid_alive_says_yes_to_us_and_no_to_a_fiction():
+    import os
+
+    assert platform_.pid_alive(os.getpid()) is True
+    assert platform_.pid_alive(999999999) is False
+
+
+def test_pid_alive_never_signals_on_windows(monkeypatch):
+    """The safety property, and the whole reason this function exists.
+
+    `os.kill(pid, 0)` probes on POSIX. On Windows CPython special-cases only
+    CTRL_C_EVENT and CTRL_BREAK_EVENT and otherwise calls `TerminateProcess`,
+    so signal 0 KILLS the target. A stale `watch.lock` holding a recycled pid
+    would have terminated an unrelated program; on CI it killed the shell
+    running pytest, which is why the Windows leg died with a KeyboardInterrupt
+    after all 660 tests had already passed.
+
+    Asserts the negative directly: on Windows, `os.kill` is never reached.
+    """
+    called: list[object] = []
+    monkeypatch.setattr(platform_, "is_windows", lambda: True)
+    monkeypatch.setattr(platform_.os, "kill", lambda *a: called.append(a))
+    monkeypatch.setattr(platform_, "_pid_alive_windows", lambda _pid: True)
+
+    assert platform_.pid_alive(1234) is True
+    assert called == [], "os.kill must never be called on Windows — it terminates"

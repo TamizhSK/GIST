@@ -98,6 +98,7 @@ def run(
         workflow_name=workflow.display_name,
         event=event,
         max_workers=jobs or os.cpu_count(),
+        workflow_env=dict(workflow.env),
         masker=masker,
         sink=_sink(layout, color=color_enabled(ctx)),
         contexts=contexts,
@@ -148,7 +149,7 @@ def _load_secrets(root: Path, overrides: dict[str, str]) -> dict[str, str]:
 
 
 def _contexts(root: Path, event: str, secrets: dict[str, str]) -> Contexts:
-    """The evaluation contexts for `${{ }}`.
+    """The RUN-WIDE contexts for `${{ }}` — the ones that cannot vary per job.
 
     `secrets` is passed in rather than left empty: `Contexts` has had the field
     since B5, but nothing populated it, so `${{ secrets.NPM_TOKEN }}` evaluated
@@ -156,6 +157,12 @@ def _contexts(root: Path, event: str, secrets: dict[str, str]) -> Contexts:
     reaching the `Masker` (so nothing leaked) and never reaching the workflow —
     which looks exactly like a masking success until you check the exit code of
     the thing that needed the token.
+
+    That was one of six fields with the same disease. `matrix`, `needs`, `job`,
+    `env`, `steps` and `runner` all vary per job instance or per step, so they
+    cannot be filled here and are filled by `executor/contexts.py` instead —
+    `for_instance` in the runner, `for_step` in the step loop. What is built
+    here is only what is true for the whole run.
     """
     contexts = Contexts(env=dict(os.environ))
     contexts.root = root

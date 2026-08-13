@@ -12,6 +12,11 @@ runs in CI on all three platforms. The Docker equivalents live in
 Why a subprocess and not `CliRunner`: exit codes and stream routing are half of
 the contract here, and they are the half that a direct function call would not
 check.
+
+Every fixture is written with `newline="\\n"`. Without it `Path.write_text`
+translates to CRLF on Windows, so the same fixture is a different file on a
+different OS and W006 (CRLF) fires on all of them — warnings that are noise
+here and could hide a real diagnostic in an assertion message.
 """
 
 from __future__ import annotations
@@ -50,7 +55,19 @@ jobs:
 
 
 def yeet(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
-    """Invoke the CLI the way a user does."""
+    """Invoke the CLI the way a user does.
+
+    `encoding` is explicit because `text=True` alone decodes with the locale
+    encoding, which is cp1252 on Windows. `PYTHONIOENCODING` only configures
+    the CHILD, so the child emitted UTF-8 (`●`, `├─`, `📦`) and the parent tried
+    to read it as cp1252: `UnicodeDecodeError` inside `subprocess`'s reader
+    thread, `stdout` came back None, and every assertion died on
+    `result.stdout + result.stderr` with a TypeError that named neither the
+    encoding nor the platform.
+
+    `errors="replace"` so that a decoding problem shows up as a failed
+    assertion about the output rather than as an exception from the harness.
+    """
     env = {**os.environ, "NO_COLOR": "1", "PYTHONIOENCODING": "utf-8"}
     return subprocess.run(
         [sys.executable, "-m", "yeet", *args],
@@ -58,6 +75,8 @@ def yeet(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=120,
     )
 
@@ -67,7 +86,7 @@ def project(tmp_path: Path) -> Path:
     """A git repo containing the walking skeleton."""
     flows = tmp_path / ".yeet" / "flows"
     flows.mkdir(parents=True)
-    (flows / "main.yml").write_text(WALKING_SKELETON, encoding="utf-8")
+    (flows / "main.yml").write_text(WALKING_SKELETON, encoding="utf-8", newline="\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
     return tmp_path
 
@@ -97,7 +116,7 @@ def test_canonical_github_actions_syntax_also_runs(tmp_path: Path) -> None:
     """Superset, not replacement — plan.md §10."""
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
-    (workflows / "ci.yml").write_text(CANONICAL, encoding="utf-8")
+    (workflows / "ci.yml").write_text(CANONICAL, encoding="utf-8", newline="\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
 
     result = yeet("run", cwd=tmp_path)
@@ -124,6 +143,7 @@ def test_a_broken_workflow_is_refused_before_anything_runs(tmp_path: Path) -> No
         "    moves:\n"
         "      - bet: echo nope\n",
         encoding="utf-8",
+        newline="\n",
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
 
@@ -146,6 +166,7 @@ def test_a_failing_step_flops_with_a_nonzero_exit(tmp_path: Path) -> None:
         "    moves:\n"
         "      - bet: exit 3\n",
         encoding="utf-8",
+        newline="\n",
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
 
@@ -197,9 +218,15 @@ def test_a_secret_resolves_and_is_masked(tmp_path: Path) -> None:
         "      - vibe: try to leak\n"
         '        bet: \'echo "len=${#NPM_TOKEN} raw=$NPM_TOKEN";'
         ' printf %s "$NPM_TOKEN" | base64\'\n'
+        # `${#VAR}` and `base64` are bash. On Windows the local default is
+        # correctly `pwsh` (GitHub's default there too), so a POSIX script has
+        # to say so — which is what a real cross-platform workflow does, and it
+        # exercises C13's "honors `shell:`" into the bargain.
+        "        shell: bash\n"
         "        drip:\n"
         "          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}\n",
         encoding="utf-8",
+        newline="\n",
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
 
@@ -212,6 +239,156 @@ def test_a_secret_resolves_and_is_masked(tmp_path: Path) -> None:
     # And it never reached the terminal, in either encoding.
     assert secret not in combined
     assert "***" in combined
+
+
+def test_a_matrix_leg_sees_its_own_value(tmp_path: Path) -> None:
+    """THE tripwire for the contexts, and the one that was missing.
+
+    `${{ matrix.node }}` expanded to the empty string in every leg that had
+    ever run: `cmd_run` built one run-wide `Contexts` and filled three of its
+    ten fields, so `matrix` was `{}` by the time the evaluator saw it. Every
+    unit test passed throughout, because each one built a `Contexts` by hand
+    and handed it straight to the evaluator — which was never the broken part.
+
+    Asserting BOTH legs matters. A single-leg assertion would still pass if the
+    runner shared one mutable `Contexts` across the pool, which is the failure
+    this shape of code invites: the legs of a wave run in parallel threads.
+    """
+    flows = tmp_path / ".yeet" / "flows"
+    flows.mkdir(parents=True)
+    (flows / "main.yml").write_text(
+        "name: matrix\n"
+        "on: {push: {}}\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: local\n"
+        "    strategy:\n"
+        "      matrix:\n"
+        "        node: [16, 18]\n"
+        "    steps:\n"
+        '      - run: echo "LEG=node${{ matrix.node }}"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
+
+    result = yeet("run", cwd=tmp_path)
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "LEG=node16" in combined, combined
+    assert "LEG=node18" in combined, combined
+
+
+def test_env_reaches_the_step_at_every_level(tmp_path: Path) -> None:
+    """Workflow, job and step `env:`, through both spellings.
+
+    Workflow-level `env:` reached the IR and stopped there — nothing layered
+    `Workflow.env` into a step's environment, so a variable declared once at
+    the top of a file was invisible to everything under it.
+
+    `${{ env.X }}` and `$X` are asserted together on purpose: they are two
+    spellings of one fact, and a step in which they disagree is worse than a
+    step in which both are empty.
+    """
+    flows = tmp_path / ".yeet" / "flows"
+    flows.mkdir(parents=True)
+    (flows / "main.yml").write_text(
+        "name: env\n"
+        "on: {push: {}}\n"
+        "env: {WF: from-workflow}\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: local\n"
+        "    env: {JOB: from-job}\n"
+        "    steps:\n"
+        '      - run: echo "A=${{ env.WF }} B=${{ env.JOB }} C=${{ env.STEP }} D=$WF"\n'
+        "        shell: bash\n"  # `$WF` is a shell variable, not PowerShell's `$env:WF`
+        "        env: {STEP: from-step}\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
+
+    result = yeet("run", cwd=tmp_path)
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "A=from-workflow B=from-job C=from-step D=from-workflow" in combined, combined
+
+
+def test_needs_carries_result_and_outputs_between_jobs(tmp_path: Path) -> None:
+    """`needs.<job>.result` / `.outputs.<name>`, and the vocabulary they use.
+
+    The result word must be GitHub's (`success`), not the console's (`slayed`).
+    Real workflows are full of `if: needs.build.result == 'success'`, and we
+    promise those files run unchanged — so the display vocabulary must not leak
+    into the expression namespace.
+
+    This also covers the chain that makes an output real: a step writes to
+    `$GITHUB_OUTPUT` -> `steps.<id>.outputs` -> the job's `outputs:` block ->
+    the downstream job's `needs` context. Every link was broken.
+    """
+    flows = tmp_path / ".yeet" / "flows"
+    flows.mkdir(parents=True)
+    (flows / "main.yml").write_text(
+        "name: needs\n"
+        "on: {push: {}}\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: local\n"
+        "    outputs: {artifact: '${{ steps.mk.outputs.name }}'}\n"
+        "    steps:\n"
+        "      - id: mk\n"
+        '        run: echo "name=app-1.2.3" >> "$GITHUB_OUTPUT"\n'
+        "        shell: bash\n"
+        "  deploy:\n"
+        "    runs-on: local\n"
+        "    needs: build\n"
+        "    steps:\n"
+        '      - run: echo "R=${{ needs.build.result }} A=${{ needs.build.outputs.artifact }}"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
+
+    result = yeet("run", cwd=tmp_path)
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "R=success A=app-1.2.3" in combined, combined
+
+
+def test_the_github_context_and_the_github_env_vars_agree(project: Path) -> None:
+    """`executor.env.github_env` finally has a call site.
+
+    It was written in session 1 against the nine fields `build_github_context`
+    promises, and went four sessions without anything calling it: `${{
+    github.sha }}` resolved while `$GITHUB_SHA` was unset. Asserting equality
+    rather than mere presence is the point — one populated and the other not is
+    exactly the state this closes.
+    """
+    subprocess.run(["git", "add", "-A"], cwd=project, check=False)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed"],
+        cwd=project,
+        check=False,
+    )
+    flows = project / ".yeet" / "flows"
+    (flows / "main.yml").write_text(
+        "name: gh\n"
+        "on: {push: {}}\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: local\n"
+        "    steps:\n"
+        '      - run: echo "SAME=$([ "${{ github.sha }}" = "$GITHUB_SHA" ] && echo yes)"\n'
+        "        shell: bash\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    result = yeet("run", cwd=project)
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "SAME=yes" in combined, combined
 
 
 def test_scan_finds_the_flow(project: Path) -> None:
