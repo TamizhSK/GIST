@@ -34,7 +34,14 @@ def test_container_default_is_bash_with_pipefail():
 
 def test_local_default_follows_the_host(monkeypatch):
     monkeypatch.setattr(script.platform_, "is_windows", lambda: True)
+    monkeypatch.setattr(
+        script.shutil, "which", lambda name: "C:/pwsh.exe" if name == "pwsh" else None
+    )
     assert script.shell_argv(None, "s.ps1", in_container=False)[0] == "pwsh"
+
+    # plan.md C13: pwsh, with the PowerShell the OS ships as the fallback.
+    monkeypatch.setattr(script.shutil, "which", lambda name: None)
+    assert script.shell_argv(None, "s.ps1", in_container=False)[0] == "powershell"
 
     monkeypatch.setattr(script.platform_, "is_windows", lambda: False)
     assert script.shell_argv(None, "s.sh", in_container=False)[0] == "bash"
@@ -52,6 +59,7 @@ def test_the_suffix_matches_the_shell_that_will_run_it(monkeypatch):
     two answers have to be checked TOGETHER or the pair can drift again.
     """
     monkeypatch.setattr(script.platform_, "is_windows", lambda: True)
+    monkeypatch.setattr(script.shutil, "which", lambda name: "C:/pwsh.exe")
     assert script.shell_argv(None, "s", in_container=False)[0] == "pwsh"
     assert script.script_suffix(None, in_container=False) == ".ps1"
 
