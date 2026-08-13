@@ -176,3 +176,73 @@ def test_source_file_is_attached() -> None:
     wf = make_workflow({"build": make_job("build", needs=["ghost"])})
     (diag,) = check(wf).items
     assert diag.file == wf.source
+
+
+def test_invalid_env_name_is_e305() -> None:
+    wf = make_workflow({"build": make_job("build", env={"1BAD": "x"})})
+    assert codes(check(wf)) == ["YEET-E305"]
+
+
+def test_invalid_container_image_is_e306() -> None:
+    wf = make_workflow({"build": make_job("build", container_image="Ubuntu")})
+    assert codes(check(wf)) == ["YEET-E306"]
+
+
+def test_missing_secret_is_e307() -> None:
+    wf = make_workflow({"build": make_job("build", steps=[make_step(run="echo ${{ secrets.MISSING }}")])})
+    assert codes(check(wf)) == ["YEET-W317"]
+
+
+def test_matrix_undeclared_var_is_e308() -> None:
+    wf = make_workflow({
+        "build": make_job(
+            "build",
+            strategy=Strategy(pos=POS, matrix={"os": ["ubuntu"]}),
+            steps=[make_step(run="echo ${{ matrix.NONEXISTENT }}")],
+        )
+    })
+    assert codes(check(wf)) == ["YEET-E308"]
+
+
+def test_duplicate_job_name_is_e304() -> None:
+    a = make_job("a", name="same")
+    b = make_job("b", name="same")
+    wf = make_workflow({"a": a, "b": b})
+    assert codes(check(wf)) == ["YEET-E304"]
+
+
+def test_unused_output_is_w318() -> None:
+    wf = make_workflow({"build": make_job("build", outputs={"out": "x"})})
+    assert codes(check(wf)) == ["YEET-W318"]
+
+
+def test_local_uses_without_action_is_e313(project_root: Path) -> None:
+    # create an empty directory to simulate a local action without action.yml
+    (project_root / "noaction").mkdir()
+    wf = make_workflow({"build": make_job("build", steps=[make_step(uses="./noaction")])})
+    wf.source = project_root / "flow.yml"
+    codeset = codes(check(wf))
+    assert "YEET-W313" in codeset
+
+
+def test_action_missing_required_input_is_e314(project_root: Path) -> None:
+    # create a minimal action.yml that requires input `foo`
+    action_dir = project_root / "actionreq"
+    action_dir.mkdir()
+    yml = action_dir / "action.yml"
+    yml.write_text(
+        """
+inputs:
+  foo:
+    required: true
+runs:
+  using: composite
+  steps:
+    - run: echo hi
+""",
+        encoding="utf-8",
+    )
+    wf = make_workflow({"build": make_job("build", steps=[make_step(uses="./actionreq")])})
+    wf.source = project_root / "flow.yml"
+    codeset = codes(check(wf))
+    assert "YEET-E314" in codeset
