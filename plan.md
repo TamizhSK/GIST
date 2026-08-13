@@ -484,7 +484,7 @@ real deliverable.
 
 ---
 
-### Dev B — Expressions, Planner, Semantic validation
+### Dev B — Expressions, Planner, Semantic validation 
 
 You own the two subsystems that make the tool look clever, plus L3 — which is
 deliberately yours because L3 *is* the same graph walk as the planner. Write the

@@ -603,3 +603,51 @@ diffs, plus a Docker job (the 18 container tests had never run in CI).
 4. `plan.md` §2.4 (read the frozen contracts out loud) and §2.5 (`git config
    core.autocrlf input`, `pre-commit install` per machine) are still open, and
    still need people rather than commits.
+
+
+
+
+
+
+# Session 3.1 : DEV A
+   Cut loot/stash from the dialect alias table. They map to artifacts:/cache: which are not canonical GitHub Actions keys. An alias would validate clean and silently do nothing at runtime. The canonical path (uses: actions/upload-artifact/cache) already works.
+
+
+
+
+What I did
+1. Removed loot/stash from aliases
+
+src/yeet/parser/aliases.yml — removed loot: artifacts and stash: cache
+tools/bootstrap.py — removed from bootstrap template
+src/yeet/storage/artifacts.py and cache.py — cleaned docstring references
+2. Updated documentation
+
+docs/handbook.md — removed loot/stash from alias table
+docs/architecture.md — added explanation of why they were removed
+docs/understanding-yeet.md — updated note about removal
+3. Widened schema support for real-world workflows
+
+src/yeet/parser/schema/workflow.schema.json — added run-name, permissions, concurrency, services, continue-on-error; widened env/timeout-minutes types to accept scalars and expressions
+4. Filled tests/corpus/ with 9 real OSS workflows
+
+checkout.yml, numpy.yml, curl.yml, pandas-unit-tests.yml, sklearn-unit-tests.yml, black-test.yml, flask-tests.yaml, jinja-tests.yaml, pytest-test.yml
+tests/corpus/README.md — provenance table with repo/branch/path/commit SHA
+.gitattributes — added tests/corpus/** text eol=lf
+5. Added parametrized corpus test
+
+tests/unit/test_corpus.py — three tests:
+test_corpus_parses_without_e1_e2 — each workflow passes layer 0/1/2
+test_corpus_builds_ir — each workflow builds IR through layer 3
+test_corpus_metric_is_above_the_floor — 80% parse success floor
+Test Results (DEV-A specific)
+185 passed, 1 skipped — all green
+Covers: corpus (19 tests), dialect parity (14), templates (11), invalid fixtures (14), golden builder (9), parser (42), layer0 (6), layer3 (21), analyzer (18)
+Gate Status
+All 5 gates green on the committed tree:
+
+ruff check/lint: pass
+ruff format: pass
+mypy strict: 101 files clean
+lint-imports: 2 kept, 0 broken
+pytest: 682 unit tests passed
