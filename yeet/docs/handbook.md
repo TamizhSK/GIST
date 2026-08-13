@@ -60,9 +60,8 @@ asserts exactly that, through the real entry point.
 Full table: `vibe`→name, `when`→on, `the_grind`/`missions`→jobs,
 `cooked_on`→runs-on, `moves`→steps, `bet`/`cook`→run, `yoink`/`borrow`→uses,
 `after`/`waits_for`→needs, `only_if`/`no_cap_if`→if, `drip`→env, `tea`→secrets,
-`squad`→strategy, `multiverse`→matrix, `loot`→artifacts, `stash`→cache,
-`patience`→timeout-minutes, `delulu`/`its_fine`→continue-on-error,
-`where`→working-directory.
+`squad`→strategy, `multiverse`→matrix, `patience`→timeout-minutes,
+`delulu`/`its_fine`→continue-on-error, `where`→working-directory.
 
 Status vocabulary in output: **slayed** (success) · **flopped** (failure) ·
 **mid** (partial) · **cooked** (running) · **skipped (not the vibe)**.

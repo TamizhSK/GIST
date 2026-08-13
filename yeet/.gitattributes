@@ -7,3 +7,4 @@
 src/**/templates/** text eol=lf
 tests/fixtures/** text eol=lf
 tests/invalid/** text eol=lf
+tests/corpus/** text eol=lf

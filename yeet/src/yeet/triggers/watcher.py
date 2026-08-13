@@ -38,6 +38,8 @@ from pathlib import Path
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
+from yeet.executor.platform_ import pid_alive as platform_pid_alive
+
 DEBOUNCE_MS = 500
 
 #: Directory names never worth watching, at any depth.
@@ -143,6 +145,7 @@ class ProjectLock:
 
 
 def _pid_alive(pid: int) -> bool:
+<<<<<<< HEAD
     """True if a process with this pid is running.
 
     `os.kill(pid, 0)` is the POSIX aliveness probe; on Windows it calls
@@ -160,6 +163,16 @@ def _pid_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+=======
+    """Delegates to `executor.platform_`, where the OS branches live.
+
+    This was `os.kill(pid, 0)`, which probes on POSIX and **terminates** on
+    Windows — a stale lock holding a recycled pid would have killed whatever
+    now owns that pid. Dev C's file, per its docstring: "every `if
+    sys.platform ==` in the codebase belongs in this file or in `paths.py`."
+    """
+    return platform_pid_alive(pid)
+>>>>>>> 5aab5fde80e2fc01b3630d46a03f73162480e4f5
 
 
 def _win_pid_alive(pid: int) -> bool:

@@ -149,8 +149,6 @@ only_if:         if
 drip:            env
 tea:             secrets
 multiverse:      matrix
-loot:            artifacts
-stash:           cache
 patience:        timeout-minutes
 delulu:          continue-on-error
 squad:           strategy
@@ -832,12 +830,18 @@ log line with `{ts, job, step, stream, text}`. `yeet logs <run-id>` replays it.
 Cheap to build, looks professional.
 
 **Artifacts & cache.**
-- `loot:` (upload-artifact) → copy to `.yeet/artifacts/<run-id>/<name>/`
-- `stash:` (cache) → key = user-supplied string, usually
+- `uses: actions/upload-artifact@v4` (canonical) → copy to
+  `.yeet/artifacts/<run-id>/<name>/`
+- `uses: actions/cache@v4` (canonical) → key = user-supplied string, usually
   `${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}`;
   store a tarball in `~/.cache/yeet/cache/<sha256(key)>.tar.zst`; support
   `restore-keys` prefix matching. `hashFiles()` must glob and hash
   deterministically (sort paths first!).
+
+These are plain `uses:` steps in both spellings — there is deliberately no
+job-level `loot:`/`stash:` dialect alias, because `artifacts:`/`cache:` are not
+canonical GitHub Actions keys and an alias for them would validate clean and
+then silently do nothing.
 
 ---
 

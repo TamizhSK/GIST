@@ -1,4 +1,4 @@
-"""loot: upload/download -> .yeet/artifacts/<run-id>/.
+"""upload/download artifacts -> .yeet/artifacts/<run-id>/.
 
 Owner: Dev D
 Tier: 5 — may import from: everything below tier 5

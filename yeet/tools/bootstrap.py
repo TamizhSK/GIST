@@ -598,8 +598,6 @@ keys:
   tea: secrets
   squad: strategy
   multiverse: matrix
-  loot: artifacts
-  stash: cache
   patience: timeout-minutes
   delulu: continue-on-error
   its_fine: continue-on-error
@@ -830,8 +828,8 @@ STUBS: list[S] = [
      "Filter EVERY output line. Mask base64 and url-encoded variants too.",
      'def mask(line: str, secrets: set[str]) -> str:\n    raise NotImplementedError\n'),
     ("storage/runs.py", "Dev D", "5", "JSONL run logs under .yeet/runs/<run-id>/. Powers `yeet logs`.", ""),
-    ("storage/artifacts.py", "Dev D", "5", "loot: upload/download -> .yeet/artifacts/<run-id>/.", ""),
-    ("storage/cache.py", "Dev D", "5", "stash: keyed tarballs + restore-keys prefix matching.", ""),
+    ("storage/artifacts.py", "Dev D", "5", "upload/download artifacts -> .yeet/artifacts/<run-id>/.", ""),
+    ("storage/cache.py", "Dev D", "5", "keyed tarballs + restore-keys prefix matching.", ""),
     ("triggers/watcher.py", "Dev D", "6",
      "watchdog daemon. DEBOUNCE or a run's own writes retrigger it forever.",
      'DEBOUNCE_MS = 500\n'),

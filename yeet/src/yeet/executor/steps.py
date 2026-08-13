@@ -28,6 +28,7 @@ from yeet.core.events import META, STDERR, STDOUT, LogEvent, LogSink
 from yeet.core.ir import Job, Step
 from yeet.core.masking import Masker
 from yeet.core.result import JobResult, Status, StepResult
+from yeet.executor import contexts as ctx_mod
 from yeet.executor import env as env_mod
 from yeet.executor import state_files
 from yeet.executor.commands import (
@@ -113,6 +114,10 @@ class StepLoopConfig:
     step_outputs: dict[str, dict[str, str]] = field(default_factory=dict)
     """`{step.id: {name: value}}` — what `steps.<id>.outputs.<k>` and a job's
     own `outputs:` block resolve against. Filled as the loop runs."""
+    step_conclusions: dict[str, str] = field(default_factory=dict)
+    """`{step.id: "success"|"failure"|"skipped"}` — the other half of the
+    `steps` context. GitHub's words, not the console's: workflows in the wild
+    are written against `steps.x.conclusion == 'success'`."""
 
 
 def run_steps(config: StepLoopConfig, executor: StepExec) -> list[StepResult]:
@@ -131,11 +136,19 @@ def run_steps(config: StepLoopConfig, executor: StepExec) -> list[StepResult]:
         name = label(step)
 
         if failed:
+            _conclude(config, step, Status.SKIPPED)
             results.append(StepResult(step_name=name, status=Status.SKIPPED))
             continue
 
-        if not truthy(step.if_, config.contexts, config.degraded):
+        # Built per step, before `if:` is evaluated: the condition is entitled
+        # to see `matrix`, `needs`, `env` and the outputs of earlier steps, and
+        # every one of those was empty when a single run-wide Contexts was
+        # threaded straight through from `cmd_run`.
+        step_ctx, step_env = _step_contexts(config, step, exported)
+
+        if not truthy(step.if_, step_ctx, config.degraded):
             _emit(config, name, META, "skipped (not the vibe): `if` was false")
+            _conclude(config, step, Status.SKIPPED)
             results.append(StepResult(step_name=name, status=Status.SKIPPED))
             continue
 
@@ -143,6 +156,7 @@ def run_steps(config: StepLoopConfig, executor: StepExec) -> list[StepResult]:
             # Dev A's resolver (A17) expands `uses:` into runnable steps before
             # we ever see it. Until that lands, say so rather than pretend.
             _emit(config, name, META, f"`uses: {step.uses}` needs actions.resolver (Dev A, A17)")
+            _conclude(config, step, Status.SKIPPED)
             results.append(StepResult(step_name=name, status=Status.SKIPPED))
             continue
 
@@ -151,6 +165,8 @@ def run_steps(config: StepLoopConfig, executor: StepExec) -> list[StepResult]:
             executor,
             step=step,
             index=index,
+            contexts=step_ctx,
+            step_env=step_env,
             exported=exported,
             path_entries=path_entries,
         )
@@ -160,6 +176,41 @@ def run_steps(config: StepLoopConfig, executor: StepExec) -> list[StepResult]:
             failed = True
 
     return results
+
+
+def _conclude(config: StepLoopConfig, step: Step, status: Status) -> None:
+    """Record a step's outcome under its `id:` for the `steps` context."""
+    if step.id:
+        config.step_conclusions[step.id] = ctx_mod.RESULT_WORDS.get(status, "failure")
+        config.step_outputs.setdefault(step.id, {})
+
+
+def _step_contexts(
+    config: StepLoopConfig, step: Step, exported: dict[str, str]
+) -> tuple[Contexts | None, dict[str, str]]:
+    """The contexts this step evaluates against, and the env it will run with.
+
+    Two passes, because `env:` values may themselves contain `${{ }}`. The
+    first builds a context WITHOUT this step's env so those values have
+    something to resolve against; the second feeds the resulting environment
+    back in, so that inside one step `${{ env.FOO }}` and `$FOO` agree.
+    """
+    pre = ctx_mod.for_step(
+        config.contexts,
+        env=config.base_env,
+        base_env=config.base_env,
+        step_outputs=config.step_outputs,
+        step_conclusions=config.step_conclusions,
+    )
+    env = _layered_env(config, step, exported, pre)
+    full = ctx_mod.for_step(
+        config.contexts,
+        env=env,
+        base_env=config.base_env,
+        step_outputs=config.step_outputs,
+        step_conclusions=config.step_conclusions,
+    )
+    return full, env
 
 
 def build_job_result(
@@ -177,8 +228,20 @@ def build_job_result(
     status = (
         Status.FAILURE if any(step.status is Status.FAILURE for step in results) else Status.SUCCESS
     )
+
+    # A job's `outputs:` block is written almost exclusively in terms of
+    # `steps.<id>.outputs.<name>`, so it has to be expanded against the context
+    # as it stands AFTER the last step — not against the run-wide one, where
+    # `steps` is permanently empty and every declared output was "".
+    final = ctx_mod.for_step(
+        config.contexts,
+        env=config.base_env,
+        base_env=config.base_env,
+        step_outputs=config.step_outputs,
+        step_conclusions=config.step_conclusions,
+    )
     outputs = {
-        name: expand(expression, config.contexts, config.degraded)
+        name: expand(expression, final, config.degraded)
         for name, expression in config.job.outputs.items()
     }
     return JobResult(
@@ -197,6 +260,8 @@ def _run_one(
     *,
     step: Step,
     index: int,
+    contexts: Contexts | None,
+    step_env: dict[str, str],
     exported: dict[str, str],
     path_entries: list[str],
 ) -> StepResult:
@@ -205,13 +270,13 @@ def _run_one(
 
     layout = config.layout.step(index, script_suffix(step.shell, in_container=config.in_container))
     files = state_files.prepare(layout.dir)
-    write_step_script(expand(step.run, config.contexts, config.degraded), layout.script)
+    write_step_script(expand(step.run, contexts, config.degraded), layout.script)
 
     request = StepRequest(
         argv=shell_argv(
             step.shell, config.to_step_path(layout.script), in_container=config.in_container
         ),
-        env=_step_env(config, step, files, exported, path_entries),
+        env=_with_state_files(config, files, step_env, path_entries),
         workdir=step.working_directory,
         timeout_s=step.timeout_minutes * 60 if step.timeout_minutes else None,
     )
@@ -232,10 +297,12 @@ def _run_one(
     back = state_files.read_back(layout.dir)
     exported.update(back[state_files.ENV])
     path_entries.extend(state_files.path_entries(back))
-    if step.id:
-        config.step_outputs[step.id] = back[state_files.OUTPUT]
 
     status = Status.SUCCESS if exit_code == 0 else Status.FAILURE
+    if step.id:
+        config.step_outputs[step.id] = back[state_files.OUTPUT]
+    _conclude(config, step, status)
+
     if status is Status.FAILURE and step.continue_on_error:
         _emit(config, name, META, f"flopped (exit {exit_code}) but `delulu: true` — carrying on")
 
@@ -248,28 +315,46 @@ def _run_one(
     )
 
 
-def _step_env(
+def _layered_env(
     config: StepLoopConfig,
     step: Step,
-    files: dict[str, Path],
     exported: dict[str, str],
-    path_entries: list[str],
+    contexts: Contexts | None,
 ) -> dict[str, str]:
     """Layered lowest-precedence first. The order is the whole contract.
 
-    base < what earlier steps exported < job env < step env < `with:` inputs.
-    State-file paths are last because nothing may shadow them, and PATH is
-    merged rather than replaced.
+    base (which now carries the workflow-level `env:`, applied by the runner)
+    < what earlier steps exported < job env < step env < `with:` inputs.
+
+    Split from the state-file paths below so that the result can be handed to
+    `contexts.for_step` before the step runs: `env:` has to be resolvable from
+    `${{ env.X }}` and from `$X`, and it can only be both if one dict feeds
+    both.
     """
     env = dict(config.base_env)
     env.update(exported)
     env.update(env_mod.stringify_all(config.job.env))
     env.update(env_mod.stringify_all(step.env))
     env.update(env_mod.input_env(step.with_))
-    env = {key: expand(value, config.contexts, config.degraded) for key, value in env.items()}
-    env.update(env_mod.state_file_env(files, to_path=config.to_step_path))
-    env_mod.merge_path(env, path_entries)
-    return env
+    return {key: expand(value, contexts, config.degraded) for key, value in env.items()}
+
+
+def _with_state_files(
+    config: StepLoopConfig,
+    files: dict[str, Path],
+    env: dict[str, str],
+    path_entries: list[str],
+) -> dict[str, str]:
+    """State-file paths last, because nothing may shadow them; PATH is merged.
+
+    These are deliberately NOT in the `env` context: `$GITHUB_ENV` names a
+    scratch file that exists for the length of one step, and a workflow reading
+    `${{ env.GITHUB_ENV }}` would be reading an implementation detail of ours.
+    """
+    out = dict(env)
+    out.update(env_mod.state_file_env(files, to_path=config.to_step_path))
+    env_mod.merge_path(out, path_entries)
+    return out
 
 
 def _pump(config: StepLoopConfig, step_name: str, stream: Iterable[Chunk]) -> None:
