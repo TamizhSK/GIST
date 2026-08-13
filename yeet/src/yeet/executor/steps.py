@@ -203,7 +203,7 @@ def _run_one(
     name = label(step)
     started = time.monotonic()
 
-    layout = config.layout.step(index, script_suffix(step.shell))
+    layout = config.layout.step(index, script_suffix(step.shell, in_container=config.in_container))
     files = state_files.prepare(layout.dir)
     write_step_script(expand(step.run, config.contexts, config.degraded), layout.script)
 

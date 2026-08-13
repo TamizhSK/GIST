@@ -7,6 +7,7 @@ See docs/architecture.md
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from yeet.executor.platform_ import is_windows
@@ -14,6 +15,7 @@ from yeet.executor.platform_ import is_windows
 DEFAULT_CONTAINER_SHELL = "bash"
 DEFAULT_POSIX_SHELL = "bash"
 DEFAULT_WINDOWS_SHELL = "pwsh"
+WINDOWS_FALLBACK_SHELL = "powershell"
 
 _ARGV: dict[str, list[str]] = {
     # `-e` so a failing command fails the step. GitHub adds `-o pipefail` for
@@ -48,6 +50,20 @@ def write_step_script(text: str, dest: Path) -> None:
     dest.write_bytes(text.replace("\r\n", "\n").encode("utf-8"))
 
 
+def default_shell(*, in_container: bool) -> str:
+    """The shell a step with no `shell:` runs under, resolved once.
+
+    In a container it is always bash — we control the image. On the host it
+    follows the platform; on Windows it is pwsh when installed and the
+    PowerShell the OS ships otherwise (plan.md C13).
+    """
+    if in_container:
+        return DEFAULT_CONTAINER_SHELL
+    if not is_windows():
+        return DEFAULT_POSIX_SHELL
+    return DEFAULT_WINDOWS_SHELL if shutil.which("pwsh") else WINDOWS_FALLBACK_SHELL
+
+
 def shell_argv(shell: str | None, script_path: str, *, in_container: bool) -> list[str]:
     """The argv that runs `script_path` under the step's `shell:`.
 
@@ -57,16 +73,19 @@ def shell_argv(shell: str | None, script_path: str, *, in_container: bool) -> li
     """
     name = (shell or "").strip().lower()
     if not name:
-        if in_container:
-            name = DEFAULT_CONTAINER_SHELL
-        else:
-            name = DEFAULT_WINDOWS_SHELL if is_windows() else DEFAULT_POSIX_SHELL
+        name = default_shell(in_container=in_container)
     argv = list(_ARGV.get(name, ["bash", "-e"]))
     argv.append(script_path)
     return argv
 
 
-def script_suffix(shell: str | None) -> str:
-    """`.sh`, `.ps1`, `.py` — pwsh refuses to run a file without `.ps1`."""
+def script_suffix(shell: str | None, *, in_container: bool = False) -> str:
+    """`.sh`, `.ps1`, `.py` — pwsh refuses to run a file without `.ps1`.
+
+    The suffix and the argv must resolve the default the same way, or the host
+    gets a `.sh` file handed to pwsh — which refuses it.
+    """
     name = (shell or "").strip().lower()
+    if not name:
+        name = default_shell(in_container=in_container)
     return SUFFIXES.get(name, ".sh")

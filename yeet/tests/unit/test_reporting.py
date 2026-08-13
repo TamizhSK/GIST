@@ -47,6 +47,30 @@ def test_run_console_group_directives() -> None:
     assert "OS: Ubuntu 22.04" in output
 
 
+def test_matrix_legs_each_print_one_header_when_interleaved() -> None:
+    """Parallel matrix legs interleave their events; a job must print its
+    header once, not once per burst (the session-5 double-rendering bug)."""
+    buf = io.StringIO()
+    console = RunConsole(out=buf, color=False)
+
+    for job, step in [
+        ("test (node 16)", "run tests"),
+        ("test (node 18)", "run tests"),
+        ("test (node 20)", "run tests"),
+        ("test (node 16)", "collect"),
+        ("test (node 18)", "collect"),
+        ("test (node 20)", "collect"),
+    ]:
+        console.emit(LogEvent.now(job=job, step=step, stream=STDOUT, text="line"))
+
+    output = buf.getvalue()
+    assert output.count("test (node 16)") == 1
+    assert output.count("test (node 18)") == 1
+    assert output.count("test (node 20)") == 1
+    assert output.count("run tests") == 3
+    assert output.count("collect") == 3
+
+
 def test_to_json_exporter(tmp_path: Path) -> None:
     diag_file = tmp_path / "test.yml"
     diag = Diagnostic(

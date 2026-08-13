@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import sys
 import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
@@ -142,6 +143,14 @@ class ProjectLock:
 
 
 def _pid_alive(pid: int) -> bool:
+    """True if a process with this pid is running.
+
+    `os.kill(pid, 0)` is the POSIX aliveness probe; on Windows it calls
+    TerminateProcess and would kill the very holder the lock is meant to
+    respect. Open the process instead.
+    """
+    if sys.platform == "win32":
+        return _win_pid_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -151,6 +160,18 @@ def _pid_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def _win_pid_alive(pid: int) -> bool:
+    import ctypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+    if handle:
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    # ERROR_ACCESS_DENIED: the process exists but is not ours to probe.
+    return int(ctypes.windll.kernel32.GetLastError()) == 5
 
 
 class _Handler(FileSystemEventHandler):

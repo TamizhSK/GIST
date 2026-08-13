@@ -58,6 +58,8 @@ def yeet(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=120,
     )
 
@@ -175,6 +177,11 @@ def test_a_run_is_recorded_and_replayable(project: Path) -> None:
     assert "we are so back" in replay.stdout
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the step body is bash (`${#VAR}`, `printf | base64`) and `local` means "
+    "PowerShell on Windows; masking plumbing is unit-covered in test_masking/test_local_backend",
+)
 def test_a_secret_resolves_and_is_masked(tmp_path: Path) -> None:
     """Both halves, because either one alone looks like success.
 

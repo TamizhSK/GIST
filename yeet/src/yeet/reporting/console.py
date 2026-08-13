@@ -35,31 +35,16 @@ class RunConsole:
         self.out = out if out is not None else sys.stdout
         self.color = color
         self._group_depth = 0
-        self._current_job: str | None = None
-        self._current_step: str | None = None
+        self._seen_jobs: set[str] = set()
+        self._job_steps: dict[str, str] = {}
 
     def emit(self, event: LogEvent) -> None:
         text = event.text.rstrip("\r\n")
 
-        # Headers FIRST, directives second. The executor opens a `::group::` as
-        # the first event of every step, so handling directives first meant the
-        # very first thing a run printed was a group header floating above the
-        # job it belonged to:
-        #
-        #     ▼ say hi          <- group, printed before its own job
-        #     ● build [cooked]
-        #       ├─ ● say hi
-        #
-        # Tracking the job/step header before the early `return` puts the tree
-        # back in the order the guide draws it.
         self._headers(event)
 
         if text.startswith("::group::"):
             group_name = text[len("::group::") :].strip()
-            # `steps.py` names the group after the step, so a group header here
-            # would just repeat the step header printed a moment ago. Track the
-            # depth, print nothing. A group the user opened themselves inside a
-            # `run:` block has a different name, and does get a header.
             if group_name != event.step:
                 indent = "  " * (self._group_depth + 2)
                 group_header = colorize(
@@ -85,10 +70,9 @@ class RunConsole:
             self._print(f"{indent}{text}")
 
     def _headers(self, event: LogEvent) -> None:
-        """Print the job and step headers when either changes."""
-        if event.job != self._current_job:
-            self._current_job = event.job
-            self._current_step = None
+        """Print each job and step header once, even when parallel legs interleave."""
+        if event.job not in self._seen_jobs:
+            self._seen_jobs.add(event.job)
             self._group_depth = 0
             job_hdr = colorize(
                 f"{SYMBOL_RUNNING} {event.job}", Colors.BOLD + Colors.BLUE, color=self.color
@@ -96,8 +80,8 @@ class RunConsole:
             tag = colorize(f"[{STATUS_COOKED}]", Colors.DIM, color=self.color)
             self._print(f"\n{job_hdr} {tag}")
 
-        if event.step and event.step != self._current_step:
-            self._current_step = event.step
+        if event.step and self._job_steps.get(event.job) != event.step:
+            self._job_steps[event.job] = event.step
             step_hdr = colorize(
                 f"  ├─ {SYMBOL_RUNNING} {event.step}", Colors.CYAN, color=self.color
             )

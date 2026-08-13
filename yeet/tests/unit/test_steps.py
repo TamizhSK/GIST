@@ -14,6 +14,7 @@ from yeet.core.events import STDERR, STDOUT, ListSink
 from yeet.core.masking import Masker
 from yeet.core.result import Status
 from yeet.executor import state_files
+from yeet.executor.script import script_suffix
 from yeet.executor.steps import Chunk, StepLoopConfig, StepRequest, run_steps
 from yeet.executor.workspace import create
 
@@ -288,7 +289,15 @@ def test_the_script_on_disk_has_no_carriage_returns(tmp_path):
     executor = FakeExec()
     run_steps(config, executor)
 
-    written = (tmp_path / ".yeet" / "tmp" / "run-1" / "build" / "step-1" / "script.sh").read_bytes()
+    written = (
+        tmp_path
+        / ".yeet"
+        / "tmp"
+        / "run-1"
+        / "build"
+        / "step-1"
+        / f"script{script_suffix(None, in_container=False)}"
+    ).read_bytes()
     assert b"\r" not in written
 
 
