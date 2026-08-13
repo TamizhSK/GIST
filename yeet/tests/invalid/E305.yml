@@ -1,0 +1,15 @@
+# E305 — a name with `=` in it cannot survive being put in an environment;
+# `NAME=value` has no unambiguous split.
+#
+# NOT tested here, deliberately: `cache-name`. A dash is legal — GitHub's own
+# caching docs use `env: {cache-name: ...}` read back as `${{ env.cache-name }}`,
+# and the first version of this rule fired on it 14 times in tests/corpus/curl.yml.
+name: bad env name
+on: [push]
+jobs:
+  build:
+    runs-on: local
+    env:
+      "MY=VAR": nope
+    steps:
+      - run: echo hi

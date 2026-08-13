@@ -150,3 +150,37 @@ def test_include_appended_legs_follow_product_order() -> None:
         {"fruit": "banana"},
         {"fruit": "banana", "shape": "circle"},
     ]
+
+
+def test_an_include_only_matrix_gives_one_leg_per_entry() -> None:
+    """No base variables at all — `include:` IS the matrix.
+
+    Three of the nine real workflows in tests/corpus/ are shaped this way
+    (Flask, Jinja, scikit-learn). `expand` used to return `[{}]`: it bailed out
+    on an empty `matrix` before it ever looked at `include`, so Flask's nine
+    Python versions planned as ONE unparameterised job that quietly tested
+    whatever `python` happened to be on the runner.
+    """
+    job = make_job(
+        "tests",
+        strategy=Strategy(
+            pos=POS,
+            matrix={},
+            include=[
+                {"python": "3.13"},
+                {"python": "3.12"},
+                {"name": "Mac", "python": "3.12", "os": "macos-latest"},
+            ],
+        ),
+    )
+
+    assert expand(job) == [
+        {"python": "3.13"},
+        {"python": "3.12"},
+        {"name": "Mac", "python": "3.12", "os": "macos-latest"},
+    ]
+
+
+def test_a_strategy_with_neither_matrix_nor_include_is_still_one_leg() -> None:
+    job = make_job("tests", strategy=Strategy(pos=POS, matrix={}))
+    assert expand(job) == [{}]

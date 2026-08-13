@@ -77,6 +77,13 @@ def run(
     # `.env` — `load_secrets` owns that precedence.
     secrets = _load_secrets(root, _parse_secrets(secret or []))
 
+    # E307 — the one Layer 3 rule that needs data Layer 3 cannot reach. The
+    # store is tier 5 and validation is tier 3, so the rule lives there as a
+    # pure function and the names are handed to it from here. Gated like the
+    # rest of layer 3: a workflow that reads a secret nobody set fails at the
+    # step that uses it, minutes in, with an empty string and no explanation.
+    _gate(_secret_bag(workflow, set(secrets)), target)
+
     masker = Masker()
     masker.update(secrets.values())
 
@@ -122,6 +129,14 @@ def _analyze(root: Path) -> Project:
     from yeet.analyzer.project import analyze
 
     return analyze(root)
+
+
+def _secret_bag(workflow: Workflow, available: set[str]) -> DiagnosticBag:
+    from yeet.validation.layer3_semantic import check_secrets
+
+    bag = DiagnosticBag()
+    bag.extend(check_secrets(workflow, available))
+    return bag
 
 
 def _load_secrets(root: Path, overrides: dict[str, str]) -> dict[str, str]:

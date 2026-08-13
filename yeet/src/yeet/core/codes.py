@@ -74,7 +74,10 @@ RULES: dict[str, Rule] = {
         _e("E301", "`needs` references an unknown job", 3),
         _e("E302", "dependency cycle", 3),
         _e("E303", "invalid matrix configuration", 3),
-        _e("E304", "duplicate job id", 3),
+        # E304 was registered as "duplicate job id", which cannot occur: jobs
+        # is a dict and two `build:` keys are caught by E102 at layer 1, before
+        # the IR exists. Retitled to the reachable version of the same mistake.
+        _e("E304", "duplicate step id", 3),
         _e("E305", "invalid environment variable name", 3),
         _e("E306", "invalid container image format", 3),
         _e("E307", "missing secret reference", 3),

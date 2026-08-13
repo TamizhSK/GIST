@@ -399,7 +399,7 @@ jobs:
 | [`YEET-E301`](#yeet-e301) | `error` | `needs` references an unknown job |
 | [`YEET-E302`](#yeet-e302) | `error` | dependency cycle |
 | [`YEET-E303`](#yeet-e303) | `error` | invalid matrix configuration |
-| [`YEET-E304`](#yeet-e304) | `error` | duplicate job id |
+| [`YEET-E304`](#yeet-e304) | `error` | duplicate step id |
 | [`YEET-E305`](#yeet-e305) | `error` | invalid environment variable name |
 | [`YEET-E306`](#yeet-e306) | `error` | invalid container image format |
 | [`YEET-E307`](#yeet-e307) | `error` | missing secret reference |
@@ -445,12 +445,29 @@ jobs:
 
 ---
 
-### `YEET-E304` — duplicate job id
+### `YEET-E304` — duplicate step id
 
 - **Layer:** 3 (Layer 3 — Semantic Validation)
 - **Default severity:** `error`
-- **Meaning:** duplicate job id.
+- **Meaning:** duplicate step id.
 - **Disabling:** Not configurable: layers 0-3 are correctness checks, and a workflow that fails one of them cannot be run faithfully.
+
+A workflow that triggers it — `tests/invalid/E304.yml`:
+
+```yaml
+# E304 — two steps in one job with the same id. `steps.setup.outputs` cannot
+# name both, so the second silently wins.
+name: duplicate step id
+on: [push]
+jobs:
+  build:
+    runs-on: local
+    steps:
+      - id: setup
+        run: echo first
+      - id: setup
+        run: echo second
+```
 
 ---
 
@@ -461,6 +478,26 @@ jobs:
 - **Meaning:** invalid environment variable name.
 - **Disabling:** Not configurable: layers 0-3 are correctness checks, and a workflow that fails one of them cannot be run faithfully.
 
+A workflow that triggers it — `tests/invalid/E305.yml`:
+
+```yaml
+# E305 — a name with `=` in it cannot survive being put in an environment;
+# `NAME=value` has no unambiguous split.
+#
+# NOT tested here, deliberately: `cache-name`. A dash is legal — GitHub's own
+# caching docs use `env: {cache-name: ...}` read back as `${{ env.cache-name }}`,
+# and the first version of this rule fired on it 14 times in tests/corpus/curl.yml.
+name: bad env name
+on: [push]
+jobs:
+  build:
+    runs-on: local
+    env:
+      "MY=VAR": nope
+    steps:
+      - run: echo hi
+```
+
 ---
 
 ### `YEET-E306` — invalid container image format
@@ -469,6 +506,21 @@ jobs:
 - **Default severity:** `error`
 - **Meaning:** invalid container image format.
 - **Disabling:** Not configurable: layers 0-3 are correctness checks, and a workflow that fails one of them cannot be run faithfully.
+
+A workflow that triggers it — `tests/invalid/E306.yml`:
+
+```yaml
+# E306 — docker repository names are lowercase; the daemon rejects this one,
+# which is a confusing place to find out.
+name: bad container image
+on: [push]
+jobs:
+  build:
+    runs-on: local
+    container: Ubuntu:22.04
+    steps:
+      - run: echo hi
+```
 
 ---
 
@@ -487,6 +539,20 @@ jobs:
 - **Default severity:** `error`
 - **Meaning:** invalid action reference.
 - **Disabling:** Not configurable: layers 0-3 are correctness checks, and a workflow that fails one of them cannot be run faithfully.
+
+A workflow that triggers it — `tests/invalid/E308.yml`:
+
+```yaml
+# E308 — a remote action must be pinned with `@`. Whether it resolves is
+# E313's question; this is about the shape.
+name: bad action reference
+on: [push]
+jobs:
+  build:
+    runs-on: local
+    steps:
+      - uses: actions/checkout
+```
 
 ---
 
@@ -560,6 +626,20 @@ jobs:
 - **Meaning:** invalid runner specification.
 - **Disabling:** Not configurable: layers 0-3 are correctness checks, and a workflow that fails one of them cannot be run faithfully.
 
+A workflow that triggers it — `tests/invalid/E316.yml`:
+
+```yaml
+# E316 — a runner label with whitespace in it is unusable at any tier. An
+# unrecognised-but-well-formed label is E315 at run time, not an error here.
+name: unusable runs-on
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu latest
+    steps:
+      - run: echo hi
+```
+
 ---
 
 ### `YEET-W317` — deprecated workflow syntax
@@ -577,6 +657,23 @@ jobs:
 - **Default severity:** `warning`
 - **Meaning:** unused output variable.
 - **Disabling:** Not configurable: layers 0-3 are correctness checks, and a workflow that fails one of them cannot be run faithfully.
+
+A workflow that triggers it — `tests/invalid/W318.yml`:
+
+```yaml
+# W318 — `sha` is declared and nothing downstream reads it. A warning: a
+# workflow under construction may legitimately declare an output first.
+name: unused output
+on: [push]
+jobs:
+  build:
+    runs-on: local
+    outputs:
+      sha: ${{ steps.rev.outputs.value }}
+    steps:
+      - id: rev
+        run: echo "value=abc" >> "$GITHUB_OUTPUT"
+```
 
 ---
 

@@ -32,12 +32,26 @@ def expand(job: Job) -> list[dict[str, Any]]:
     after the product. New legs are never merge targets: only the original
     product counts.
 
+    A matrix may consist of NOTHING BUT `include:` — no base variables at all,
+    each entry its own leg. It is a common real-world shape (three of the nine
+    workflows in tests/corpus/ use it, including Flask's and scikit-learn's)
+    and it needs its own branch: with no base keys the product is a single
+    empty leg, and the merge rule below would then fold every include entry
+    into that one leg and return a matrix of one. Flask's nine Python versions
+    ran as a single unparameterised job.
+
+    `exclude` is not applied to those legs. GitHub's order is product ->
+    exclude -> include, and with no product there is nothing for exclude to
+    remove; an `exclude` beside an include-only matrix is a no-op there too.
+
     A job with no strategy returns [{}] — one leg, no variables. Callers can
     then treat every job identically.
     """
     strategy = job.strategy
-    if strategy is None or not strategy.matrix:
+    if strategy is None:
         return [{}]
+    if not strategy.matrix:
+        return [dict(entry) for entry in strategy.include] if strategy.include else [{}]
 
     keys = list(strategy.matrix)
     product_legs = [
