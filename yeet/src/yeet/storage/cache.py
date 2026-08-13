@@ -1,4 +1,4 @@
-"""stash: keyed tarballs + restore-keys prefix matching.
+"""keyed tarballs + restore-keys prefix matching.
 
 Owner: Dev D
 Tier: 5 — may import from: everything below tier 5
