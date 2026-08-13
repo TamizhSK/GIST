@@ -3,11 +3,13 @@
 Companion to [`architecture.md`](architecture.md). That one says *what* to build;
 this one says *where each thing lives* and *what to do in which order*.
 
-> **The skeleton already exists — do not run `tools/bootstrap.py`.**
-> It generated this tree once, and it has since fallen out of date: its embedded
-> stubs still carry the pre-Day-0 signatures and it still writes
-> `secrets/masking.py`, which we deleted. Running it with `--force` would revert
-> Day 0. Clone the repo instead.
+> **The skeleton already exists — clone the repo.**
+> `tools/bootstrap.py` generated this tree once and has been deleted: its
+> embedded stubs still carried the pre-Day-0 signatures and it still wrote
+> `secrets/masking.py`, which ADR 0007 removed, so running it would have
+> reverted Day 0. It was kept "as documentation" for several sessions without
+> being wired to the Makefile, CI or pre-commit; git history is the better
+> record.
 
 ```bash
 git clone <this repo> && cd yeet
@@ -204,10 +206,12 @@ inside a wave run in parallel; waves run in sequence.
 `find_cycle()` does double duty — the scheduler needs it, and Layer 3 validation
 calls the same function for `E302`. Write it once.
 
-It lives in **`core/graph.py`**, not `planner/graph.py`: validation is tier 3 and
-the planner is tier 4, so calling into the planner would be an upward import.
-`planner/graph.py` is a ten-line `Job`-shaped adapter over it. Same function,
-one tier lower. See [`adr/0007`](adr/0007-tier-rule-consequences.md).
+It lives in **`core/graph.py`**: validation is tier 3 and the planner is tier 4,
+so calling into the planner would be an upward import. `planner/plan.py` calls
+`core.graph` directly on a `{node: [deps]}` map it builds itself — the
+`planner/graph.py` `Job`-shaped adapter ADR 0007 anticipated was written, never
+imported by anything, and has been deleted. See
+[`adr/0007`](adr/0007-tier-rule-consequences.md).
 
 ### ⑤ Execute — `executor/`
 
@@ -248,8 +252,8 @@ Build the prefix first and every command downstream comes almost free.
 
 Do these with all four of you in one room. It's three or four hours.
 
-**1. ~~One person runs `bootstrap.py` and pushes.~~ Already done** — the skeleton
-is in the repo and green. Everyone clones. Do not re-run the bootstrap script.
+**1. ~~One person runs the bootstrap script and pushes.~~ Already done** — the
+skeleton is in the repo and green. Everyone clones.
 
 **2. Everyone gets a working env.**
 ```bash

@@ -67,3 +67,25 @@ free of policy, and every workaround below is independently worth having.
   these rather than a direct import. That is the cost, and it is the point.
 - `lint-imports` runs in CI and in `make check`, so a regression is caught at
   push time rather than during a Thursday merge.
+
+## Amendment — 2026-08-14
+
+Two notes from later sessions. The decision stands; these record what it looked
+like once the code caught up.
+
+**`planner/graph.py` is gone.** This ADR anticipated a `Job`-shaped adapter in
+the planner over `core.graph`. It was written and nothing ever imported it —
+`planner/plan.py` builds a `{node: [deps]}` map itself (it has to: the DAG is
+over matrix-expanded *instances*, not jobs) and calls `core.graph` directly.
+The adapter was deleted rather than left as a second, drifting spelling of the
+same walk. The decision it came from — the algorithm lives at tier 0 so tier 3
+and tier 4 can share it — is unchanged and is what made deleting it painless.
+
+**A fourth indirection joined the set.** `core/builtins.py` carries
+`BuiltinContext`/`BuiltinResult`/`BuiltinRunner` for the same reason
+`core.events.LogSink` and `core.masking.Masker` exist: `actions/cache` and
+`actions/upload-artifact` are implemented against `storage/` and invoked from
+the executor's step loop, and those two are siblings that may not import each
+other. `cli/cmd_run` passes `storage.builtin.run_builtin` down. The "expect to
+write an indirection rather than a direct import" consequence above is now
+load-bearing rather than hypothetical.

@@ -15,7 +15,7 @@
 > | masking lives in `secrets/` (§5, §6 Dev D) | pure `Masker` is in **`core/masking.py`**; `secrets/store.py` keeps only loading and decryption. `executor` may not import `secrets`. |
 > | the executor writes run logs via `storage/` (§5) | the executor emits to a **`core.events.LogSink`** Protocol; `storage.runs` implements it. `executor` may not import `storage`. |
 > | `actions/` sits beside the executor (§3.7) | `actions/` is **tier 2**, beside `parser/`. It resolves `uses:` into IR and executes nothing; the executor consumes the result. |
-> | "`planner/graph.py::find_cycle()` does double duty" (§3.4) | the walk is in **`core/graph.py`**. Validation is tier 3 and the planner is tier 4, so Layer 3 cannot call into the planner. `planner/graph.py` is a thin adapter. |
+> | "`planner/graph.py::find_cycle()` does double duty" (§3.4) | the walk is in **`core/graph.py`**. Validation is tier 3 and the planner is tier 4, so Layer 3 cannot call into the planner. `planner/plan.py` calls it directly; the `planner/graph.py` adapter was never imported and has been deleted. |
 >
 > Everything else — the pipeline, the five validation layers, the diagnostic
 > codes, one-container-per-job, the cross-platform checklist — is unchanged.
