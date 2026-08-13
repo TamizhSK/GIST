@@ -14,8 +14,26 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 import sys
 from pathlib import Path
+
+POSIX_SHELLS = ("bash", "sh")
+
+GIT_BASH_CANDIDATES = (
+    r"C:\Program Files\Git\bin\bash.exe",
+    r"C:\Program Files (x86)\Git\bin\bash.exe",
+)
+"""Where Git for Windows puts bash. Checked before anything on PATH.
+
+`C:\\Windows\\System32\\bash.exe` — which is what bare `bash` resolves to on a
+stock Windows box, and on GitHub's windows-latest runner — is the **WSL
+launcher**, not a shell. With no distribution installed it prints "Windows
+Subsystem for Linux has no installed distributions" (in UTF-16, to add insult)
+and exits non-zero, so every `shell: bash` step fails with a message about
+Linux distributions that has nothing to do with the workflow. GitHub Actions
+itself never invokes bare `bash` on Windows for exactly this reason.
+"""
 
 WSL_MARKER = "microsoft"
 """Both WSL1 and WSL2 put this in /proc/version. WSL2 writes `microsoft-standard`,
@@ -73,6 +91,89 @@ def docker_user() -> str | None:
     if getuid is None or getgid is None:  # pragma: no cover - non-POSIX without win32
         return None
     return f"{getuid()}:{getgid()}"
+
+
+def shell_executable(name: str) -> str:
+    """The program to actually exec for a shell name. Only Windows differs.
+
+    Returns `name` unchanged everywhere except Windows + `bash`/`sh`, where
+    bare `bash` is System32's WSL launcher rather than a shell — see
+    GIT_BASH_CANDIDATES. Git for Windows is looked for in its two install
+    locations, then derived from `git` on PATH (`…/cmd/git.exe` ->
+    `…/bin/bash.exe`), and only then do we give up and return the bare name so
+    the failure is the user's PATH rather than ours.
+    """
+    if not is_windows() or name not in POSIX_SHELLS:
+        return name
+
+    for candidate in GIT_BASH_CANDIDATES:
+        if Path(candidate).is_file():
+            return candidate
+
+    git = shutil.which("git")
+    if git is not None:
+        bash = Path(git).parent.parent / "bin" / "bash.exe"
+        if bash.is_file():
+            return str(bash)
+
+    return name
+
+
+def pid_alive(pid: int) -> bool:
+    """Is this pid a running process? **Probes. Never signals.**
+
+    `os.kill(pid, 0)` is the POSIX idiom and it is actively dangerous on
+    Windows: CPython's `os.kill` there special-cases only CTRL_C_EVENT and
+    CTRL_BREAK_EVENT and otherwise calls `TerminateProcess(handle, sig)` — so
+    signal 0, the "just checking" signal everywhere else, KILLS the process.
+
+    A stale `watch.lock` holding a recycled pid would therefore terminate an
+    unrelated program on the user's machine. It also killed the CI shell: the
+    lock test writes `os.getppid()` to look "alive and not us", and probing it
+    on windows-latest terminated the pwsh process running the step, so the
+    whole pytest session died with a KeyboardInterrupt after the test had
+    already passed.
+
+    On Windows we ask the kernel instead. A process that exited with code 259
+    (STILL_ACTIVE) is indistinguishable from a running one; that is a
+    documented quirk of the API and is not worth a second syscall here, since
+    the only cost is declining to take over one stale lock.
+    """
+    if is_windows():
+        return _pid_alive_windows(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, owned by someone else
+    except OSError:
+        return False
+    return True
+
+
+def _pid_alive_windows(pid: int) -> bool:
+    import ctypes
+
+    process_query_limited_information = 0x1000
+    still_active = 259
+
+    # `getattr` rather than `ctypes.windll.kernel32`: the attribute only exists
+    # on Windows, so a direct reference needs `# type: ignore[attr-defined]`
+    # off Windows and mypy then rejects that same ignore ON Windows as unused
+    # (`warn_unused_ignores`). One spelling cannot satisfy a strict run on both,
+    # and CI type-checks on all three. This needs no ignore anywhere.
+    kernel32 = getattr(ctypes, "windll").kernel32  # noqa: B009
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        return False
+    try:
+        code = ctypes.c_ulong()
+        if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return bool(code.value == still_active)
+        return True  # it exists; we just cannot read its status
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def runner_os() -> str:
