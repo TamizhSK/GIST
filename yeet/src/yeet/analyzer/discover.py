@@ -13,7 +13,16 @@ from pathlib import Path
 
 import pathspec
 
-MAX_DEPTH = 5
+MAX_DEPTH = 6
+"""Deep enough for `apps/<svc>/<pkg>/.github/workflows/ci.yml` in a monorepo.
+
+The cap exists so pointing yeet at `$HOME` by mistake terminates; it is not a
+statement about how deep a workflow may live. Once the walk is INSIDE a
+recognised flow directory the cap is lifted (`_walk`), because
+`.github/workflows/reusable/build.yml` is a real layout and truncating it would
+silently drop a file the user can see with `ls`.
+"""
+
 MAX_FILES = 20_000
 FOLLOW_SYMLINKS = False
 
@@ -49,10 +58,41 @@ GH_FLOW_SUFFIXES = {".yml", ".yaml"}
 ROOT_FLOW_NAMES = ("yeet.yml", "yeet.yaml", "yeet.json", ".yeet.yml")
 
 # Precedence for the returned list: .yeet/flows/ first, then .github/workflows/,
-# then a root-level single-file project. Lower number = earlier.
+# then a bare workflows/ directory, then a root-level single-file project.
+# Lower number = earlier.
 _ORDER_YEET = 0
 _ORDER_GITHUB = 1
-_ORDER_ROOT = 2
+_ORDER_BARE = 2
+_ORDER_ROOT = 3
+
+#: Directory chains that mean "the files under here are workflows", matched at
+#: ANY depth and with any number of subdirectories beneath them.
+#:
+#: `("workflows",)` on its own is what makes a plain `workflows/ci.yml` work —
+#: GitLab-style layouts, `ci/workflows/`, and every repo that keeps its
+#: pipelines somewhere other than `.github/`. It sits BELOW `.github/workflows`
+#: in precedence because a repo that has both means the `.github` one.
+_FLOW_DIRS: tuple[tuple[tuple[str, ...], int, frozenset[str]], ...] = (
+    ((".yeet", "flows"), _ORDER_YEET, frozenset(YEET_FLOW_SUFFIXES)),
+    ((".github", "workflows"), _ORDER_GITHUB, frozenset(GH_FLOW_SUFFIXES)),
+    ((".gitea", "workflows"), _ORDER_GITHUB, frozenset(GH_FLOW_SUFFIXES)),
+    ((".forgejo", "workflows"), _ORDER_GITHUB, frozenset(GH_FLOW_SUFFIXES)),
+    ((".yeet",), _ORDER_YEET, frozenset(YEET_FLOW_SUFFIXES)),
+    (("workflows",), _ORDER_BARE, frozenset(GH_FLOW_SUFFIXES)),
+    (("flows",), _ORDER_BARE, frozenset(GH_FLOW_SUFFIXES)),
+)
+
+#: Subdirectories of a `.yeet/` that a RUN writes to. They are not flows and
+#: descending into them on a busy project is thousands of wasted stats.
+_YEET_RUNTIME_DIRS = frozenset({"tmp", "runs", "artifacts", "cache", "actions"})
+
+#: How each flow was found, for `yeet scan`'s report. Keyed by the order rank.
+SOURCE_LABELS = {
+    _ORDER_YEET: "yeet",
+    _ORDER_GITHUB: "github",
+    _ORDER_BARE: "workflows",
+    _ORDER_ROOT: "root",
+}
 
 
 @dataclass
@@ -60,16 +100,23 @@ class Discovery:
     flows: list[Path] = field(default_factory=list)
     foreign_ci: list[Path] = field(default_factory=list)
     truncated: bool = False
+    sources: dict[Path, str] = field(default_factory=dict)
+    """flow path -> one of SOURCE_LABELS. `yeet scan` prints it so a user who
+    did not expect `docs/workflows/example.yml` to be picked up can see why."""
 
 
 def discover_flows(root: Path) -> tuple[list[Path], list[Path]]:
     """Return (flows, foreign_ci).
 
-    Flows are in precedence order: .yeet/flows/ > .github/workflows/ > a root
-    yeet.yml. Track visited inodes to break symlink and junction loops, and
-    wrap every scandir in a PermissionError handler — on a corporate laptop you
-    WILL hit directories you cannot read, and crashing there is a bad first
-    impression.
+    Flows are in precedence order: `.yeet/flows/` > `.github/workflows/` >
+    a bare `workflows/` directory > a root `yeet.yml`. Each of those
+    directories is matched at ANY depth, with any nesting beneath it, so a
+    monorepo's `packages/api/.github/workflows/ci.yml` is found by the same
+    walk that finds the one at the top.
+
+    Track visited inodes to break symlink and junction loops, and wrap every
+    scandir in a PermissionError handler — on a corporate laptop you WILL hit
+    directories you cannot read, and crashing there is a bad first impression.
     """
     found = _discover(root)
     return found.flows, found.foreign_ci
@@ -89,9 +136,11 @@ def _discover(root: Path) -> Discovery:
     found = Discovery()
     ranked: list[tuple[int, Path]] = []
 
-    def walk(d: Path, depth: int) -> None:
+    def walk(d: Path, depth: int, *, inside_flow_dir: bool) -> None:
         nonlocal seen, truncated
-        if truncated or depth > MAX_DEPTH:
+        if truncated:
+            return
+        if depth > MAX_DEPTH and not inside_flow_dir:
             return
         try:
             st = d.stat()
@@ -123,9 +172,9 @@ def _discover(root: Path) -> Discovery:
             if _is_ignored(spec, rel_posix, is_dir):
                 continue
             if is_dir:
-                if name in EXCLUDE_DIRS or rel_posix in EXCLUDE_DIRS:
+                if name in EXCLUDE_DIRS or _is_yeet_runtime_dir(rel.parts):
                     continue
-                walk(path, depth + 1)
+                walk(path, depth + 1, inside_flow_dir=_rank_of_dir(rel.parts) is not None)
             else:
                 try:
                     if entry.is_file(follow_symlinks=False):
@@ -133,13 +182,52 @@ def _discover(root: Path) -> Discovery:
                 except OSError:
                     continue
 
-    walk(root, 0)
-    found.flows = [p for _, p in sorted(ranked, key=lambda item: (item[0], item[1].name))]
+    walk(root, 0, inside_flow_dir=_rank_of_dir(()) is not None)
+    ranked.sort(key=lambda item: (item[0], len(item[1].parts), item[1].name))
+    found.flows = [p for _, p in ranked]
+    found.sources = {p: SOURCE_LABELS[rank] for rank, p in ranked}
     found.truncated = truncated
     return found
 
 
+def _is_yeet_runtime_dir(parts: tuple[str, ...]) -> bool:
+    """`.yeet/tmp`, `.yeet/runs`, … at any depth — a run's own scratch space.
+
+    This used to be spelled as `.yeet/tmp` entries in EXCLUDE_DIRS compared
+    against the root-relative path, which stopped working the moment a
+    sub-package had its own `.yeet/`. The pair of names is the whole rule.
+    """
+    return len(parts) >= 2 and parts[-2] == ".yeet" and parts[-1] in _YEET_RUNTIME_DIRS
+
+
+def _rank_of_dir(parts: tuple[str, ...]) -> int | None:
+    """Is this directory (root-relative) a flow directory, and at what rank?
+
+    Matched on the TAIL of the path, so `.github/workflows` counts wherever it
+    appears. `()` — the root itself — is checked against the single-segment
+    chains, which is what makes `yeet scan .github/workflows` work: point the
+    tool straight at a workflow directory and it reads the files in it.
+    """
+    best: int | None = None
+    for chain, rank, _ in _FLOW_DIRS:
+        if _tail_matches(parts, chain) and (best is None or rank < best):
+            best = rank
+    return best
+
+
+def _tail_matches(parts: tuple[str, ...], chain: tuple[str, ...]) -> bool:
+    return len(parts) >= len(chain) and parts[len(parts) - len(chain) :] == chain
+
+
 def _classify(rel: Path, path: Path, found: Discovery, ranked: list[tuple[int, Path]]) -> None:
+    """One file -> foreign CI, a ranked flow, or nothing.
+
+    The flow test walks the file's ancestor directories from the deepest
+    upward, so `.github/workflows/reusable/build.yml` matches on
+    `.github/workflows` two levels up and keeps that rank. Deepest-first also
+    means `.yeet/flows` inside a `.github/workflows` tree (nobody does this,
+    but the walk allows it) is ranked by the directory it actually sits in.
+    """
     parts = rel.parts
     if parts[-1] in FOREIGN_CI:
         found.foreign_ci.append(path)
@@ -147,22 +235,12 @@ def _classify(rel: Path, path: Path, found: Discovery, ranked: list[tuple[int, P
     if len(parts) == 1 and rel.name in ROOT_FLOW_NAMES:
         ranked.append((_ORDER_ROOT, path))
         return
-    if (
-        len(parts) == 3
-        and parts[0] == ".yeet"
-        and parts[1] == "flows"
-        and rel.suffix in YEET_FLOW_SUFFIXES
-    ):
-        ranked.append((_ORDER_YEET, path))
-        return
-    if (
-        len(parts) == 3
-        and parts[0] == ".github"
-        and parts[1] == "workflows"
-        and rel.suffix in GH_FLOW_SUFFIXES
-    ):
-        ranked.append((_ORDER_GITHUB, path))
-        return
+    dirs = parts[:-1]
+    for cut in range(len(dirs), -1, -1):
+        for chain, rank, suffixes in _FLOW_DIRS:
+            if _tail_matches(dirs[:cut], chain) and rel.suffix in suffixes:
+                ranked.append((rank, path))
+                return
 
 
 def _load_ignore_spec(root: Path) -> pathspec.PathSpec[pathspec.Pattern]:

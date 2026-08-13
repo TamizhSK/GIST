@@ -154,18 +154,6 @@ def _pid_alive(pid: int) -> bool:
     return platform_pid_alive(pid)
 
 
-def _win_pid_alive(pid: int) -> bool:
-    import ctypes
-
-    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-    handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
-    if handle:
-        ctypes.windll.kernel32.CloseHandle(handle)
-        return True
-    # ERROR_ACCESS_DENIED: the process exists but is not ours to probe.
-    return int(ctypes.windll.kernel32.GetLastError()) == 5
-
-
 class _Handler(FileSystemEventHandler):
     def __init__(self, debouncer: Debouncer) -> None:
         self.debouncer = debouncer
