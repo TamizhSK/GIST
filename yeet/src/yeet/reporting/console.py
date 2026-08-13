@@ -21,7 +21,6 @@ from yeet.core.events import (
     JOB_START,
     META,
     STDERR,
-    STDOUT,
     STEP_END,
     STEP_START,
     LogEvent,
@@ -46,13 +45,17 @@ class RunConsole:
     vocabulary comes from `theme.py` — slayed / flopped / mid / cooked /
     skipped (not the vibe).
 
-    `verbose` controls only the raw stdout/stderr body of a step, not its
-    header/footer line: with `verbose=False` you still see every job and step
-    with its final `[OK]`/`[FAIL]` and timing, just not the output in between — this
-    terminal has no cursor to collapse a finished step's log into, the way
-    `reporting.live` does, so "collapsed" here means "never printed" rather
-    than "printed then hidden". `yeet logs` wants the opposite (it exists to
-    show you everything), so it defaults to `True`.
+    `verbose` adds the `::group::` headers a step emitted. It does NOT gate the
+    step's stdout/stderr, which is always printed.
+
+    That distinction is the whole point of this class. There is no cursor here
+    — this renderer is what a pipe, a redirect and a CI log get — so anything
+    not printed is not hidden, it is gone, and no flag the user has already
+    failed to pass can bring it back. `reporting.live` may collapse a finished
+    step because it has a terminal to collapse into and `yeet logs` to replay
+    from; this one may not. Suppressing output here meant `yeet run > out.txt`
+    contained a tree of `[OK]`s and not one line of what the build actually
+    said.
     """
 
     def __init__(
@@ -88,8 +91,6 @@ class RunConsole:
             return
 
         text = event.text.rstrip("\r\n")
-        if not self.verbose and event.stream in (STDOUT, STDERR):
-            return
 
         if text.startswith("::group::"):
             if not self.verbose:

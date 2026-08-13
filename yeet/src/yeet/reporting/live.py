@@ -325,27 +325,29 @@ class LiveRunConsole:
 
     def _visible_lines(self, step: _StepNode) -> list[tuple[str, str]]:
         """META notes (skip/timeout/degraded reasons) always show — they are
-        never raw output. stdout/stderr is the part GH Actions collapses once
-        a step finishes: shown in full while running (tailed, unless
-        `--verbose`), kept in full afterwards only for a step that failed
-        (you came here to see why) or when `--verbose` asked for everything.
+        never raw output. stdout/stderr is tailed, in full for a step that
+        failed (you came here to see why) or when `--verbose` asked for it.
+
+        A finished step keeps its tail rather than dropping to META-only. GH
+        Actions can collapse a green step to nothing because the log is one
+        click away; the equivalent here is `yeet logs`, which is two commands
+        and a run id away, and in between the user is looking at a build that
+        printed no evidence it did anything. `echo` is how people debug these
+        files — a runner whose default output contains none of it reads as
+        broken even when it is not.
         """
-        if step.status == Status.RUNNING.value:
-            if self.verbose:
-                return step.lines
-            kept: list[tuple[str, str]] = []
-            body_budget = LIVE_TAIL_LINES
-            for stream, text in reversed(step.lines):
-                if stream == META:
-                    kept.append((stream, text))
-                elif body_budget > 0:
-                    kept.append((stream, text))
-                    body_budget -= 1
-            kept.reverse()
-            return kept
         if self.verbose or step.status == Status.FAILURE.value:
             return step.lines
-        return [line for line in step.lines if line[0] == META]
+        kept: list[tuple[str, str]] = []
+        body_budget = LIVE_TAIL_LINES
+        for stream, text in reversed(step.lines):
+            if stream == META:
+                kept.append((stream, text))
+            elif body_budget > 0:
+                kept.append((stream, text))
+                body_budget -= 1
+        kept.reverse()
+        return kept
 
     # -- summary ---------------------------------------------------------------
 

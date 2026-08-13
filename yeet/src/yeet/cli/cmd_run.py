@@ -114,7 +114,11 @@ def run(
         max_workers=jobs or os.cpu_count(),
         workflow_env=dict(workflow.env),
         masker=masker,
-        sink=_sink(layout, color=color_enabled(ctx)),
+        # The one place that knows both halves: `storage` implements the
+        # built-in actions, the executor runs them, and the tier contract keeps
+        # those two from importing each other. See `core/builtins.py`.
+        builtins=run_builtin,
+        sink=FanOut(sinks=[console_sink, RunStore(layout.root, layout.run_id)]),
         contexts=contexts,
         layout=layout,
     )
@@ -283,4 +287,3 @@ def _parse_secrets(pairs: list[str]) -> dict[str, str]:
         if sep and key.strip():
             out[key.strip()] = value
     return out
-
