@@ -108,15 +108,22 @@ def scan(
     _echo(f"🔎 flows found: {len(project.flows)}", color=color, fg=typer.colors.BRIGHT_WHITE)
     for flow in project.flows:
         rel = flow.relative_to(project.root)
+        # Which convention matched. Worth one word: flows are found at any
+        # depth now, so a `docs/workflows/example.yml` showing up in this list
+        # is correct but surprising, and "[workflows]" answers the question the
+        # user is about to ask.
+        source = project.source_of(flow)
+        tag = f" [{source}]" if source else ""
         status, n_errors, n_warnings = _flow_validity(flow)
         if status == "bad":
             _echo(
-                f"   {_BAD} {rel}  {n_errors} errors, {n_warnings} warnings → run `yeet check`",
+                f"   {_BAD} {rel}{tag}  "
+                f"{n_errors} errors, {n_warnings} warnings → run `yeet check`",
                 color=color,
                 fg=typer.colors.RED,
             )
         else:
-            _echo(f"   {_OK} {rel}      valid", color=color, fg=typer.colors.GREEN)
+            _echo(f"   {_OK} {rel}{tag}      valid", color=color, fg=typer.colors.GREEN)
 
     if project.foreign_ci:
         _echo("", color=color)

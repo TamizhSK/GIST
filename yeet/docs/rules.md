@@ -103,6 +103,7 @@ YEET-W407: off      # silence entirely
 | [`YEET-E102`](#yeet-e102) | `error` | duplicate key |
 | [`YEET-E103`](#yeet-e103) | `error` | top-level document is not a mapping |
 | [`YEET-E104`](#yeet-e104) | `error` | multi-document YAML is not allowed |
+| [`YEET-E106`](#yeet-e106) | `error` | the same key written twice, once in the dialect |
 | [`YEET-W105`](#yeet-w105) | `warning` | unquoted `on` parsed as a boolean |
 
 ---
@@ -178,6 +179,31 @@ jobs:
   build:
     steps:
       - run: "echo hi"
+```
+
+---
+
+### `YEET-E106` — the same key written twice, once in the dialect
+
+- **Layer:** 1 (Layer 1 — YAML Syntax)
+- **Default severity:** `error`
+- **Meaning:** the same key written twice, once in the dialect.
+- **Disabling:** Not configurable: layers 0-3 are correctness checks, and a workflow that fails one of them cannot be run faithfully.
+
+A workflow that triggers it — `tests/invalid/E106.yml`:
+
+```yaml
+# E106 — `vibe:` is the dialect spelling of `name:`. Writing both in one
+# mapping means one of them is silently dropped by the alias rewrite, so we
+# refuse the file instead of guessing which one was meant.
+name: canonical name
+vibe: dialect name
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
 ```
 
 ---

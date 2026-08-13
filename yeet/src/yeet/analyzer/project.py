@@ -39,6 +39,7 @@ def analyze(start: Path) -> Project:
         branch=_branch(root) if is_git else None,
         dockerfile=_dockerfile(root),
         truncated=found.truncated,
+        flow_sources=found.sources,
     )
 
 

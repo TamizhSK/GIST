@@ -7,6 +7,7 @@ See docs/architecture.md
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,67 @@ def alias_keys() -> list[str]:
 def alias_map() -> dict[str, str]:
     """alias -> canonical, for reverse lookups. Never fails (empty on error)."""
     return dict(_load_aliases())
+
+
+@dataclass(frozen=True, slots=True)
+class Collision:
+    """Two spellings of one key in the same mapping. See `find_collisions`."""
+
+    canonical: str
+    spellings: tuple[str, ...]
+    line: int
+    col: int
+
+
+def find_collisions(node: Any) -> list[Collision]:
+    """Mappings where two keys normalize to the same canonical key.
+
+    RUN THIS BEFORE `normalize()`. The rewrite is `mapping[new] =
+    mapping.pop(old)`, so a file containing both `name:` and `vibe:` loses one
+    of them with no diagnostic at all — the tool silently ran a workflow the
+    user did not write. Both spellings are legal everywhere, in any file, in
+    any directory; what is not legal is spelling the SAME key twice and
+    expecting us to guess which one was meant.
+
+    Alias-vs-alias counts too: `bet:` and `cook:` are both `run`.
+
+    Reported as an error rather than resolved by precedence because there is no
+    honest precedence to pick. `name:` first in the file is not more intentional
+    than `vibe:` second, and quietly dropping either is the failure mode this
+    whole function exists to remove.
+    """
+    aliases = _load_aliases()
+    found: list[Collision] = []
+    _collect_collisions(node, aliases, found)
+    return found
+
+
+def _collect_collisions(node: Any, aliases: dict[str, str], found: list[Collision]) -> None:
+    if isinstance(node, CommentedMap):
+        by_target: dict[str, list[str]] = {}
+        for key in node:
+            if not isinstance(key, str):
+                continue
+            by_target.setdefault(aliases.get(key, key), []).append(key)
+        for canonical, spellings in by_target.items():
+            if len(spellings) > 1:
+                line, col = _key_pos(node, spellings[-1])
+                found.append(Collision(canonical, tuple(spellings), line, col))
+        for value in node.values():
+            _collect_collisions(value, aliases, found)
+        return
+    if isinstance(node, list):
+        for item in node:
+            _collect_collisions(item, aliases, found)
+
+
+def _key_pos(mapping: CommentedMap, key: str) -> tuple[int, int]:
+    """Point at the LATER spelling — the one whose value currently wins."""
+    try:
+        line, col = mapping.lc.key(key)
+    except (AttributeError, KeyError, TypeError):
+        return -1, -1
+    return int(line), int(col)
 
 
 def normalize(node: Any) -> tuple[Any, bool]:

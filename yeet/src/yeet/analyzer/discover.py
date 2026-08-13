@@ -129,6 +129,7 @@ def discover(root: Path) -> Discovery:
 
 def _discover(root: Path) -> Discovery:
     root = root.expanduser().resolve()
+    floor = len(root.parts)
     spec = _load_ignore_spec(root)
     visited: set[tuple[int, int]] = set()
     seen = 0
@@ -172,18 +173,23 @@ def _discover(root: Path) -> Discovery:
             if _is_ignored(spec, rel_posix, is_dir):
                 continue
             if is_dir:
-                if name in EXCLUDE_DIRS or _is_yeet_runtime_dir(rel.parts):
+                if name in EXCLUDE_DIRS or _is_yeet_runtime_dir(path.parts):
                     continue
-                walk(path, depth + 1, inside_flow_dir=_rank_of_dir(rel.parts) is not None)
+                walk(path, depth + 1, inside_flow_dir=_rank_of_dir(path.parts) is not None)
             else:
                 try:
                     if entry.is_file(follow_symlinks=False):
-                        _classify(rel, path, found, ranked)
+                        _classify(rel, path, found, ranked, floor=floor)
                 except OSError:
                     continue
 
-    walk(root, 0, inside_flow_dir=_rank_of_dir(()) is not None)
-    ranked.sort(key=lambda item: (item[0], len(item[1].parts), item[1].name))
+    walk(root, 0, inside_flow_dir=_rank_of_dir(root.parts) is not None)
+    # rank, then shallowest, then path. Shallowest-before-deepest is what makes
+    # `yeet run` with no --flow pick the repo's own workflow over a vendored
+    # example three directories down. The final key is the whole path rather
+    # than the bare filename so sibling packages stay grouped — sorting on the
+    # name alone interleaves `packages/api/ci.yml` with `packages/web/ci.yaml`.
+    ranked.sort(key=lambda item: (item[0], len(item[1].parts), str(item[1])))
     found.flows = [p for _, p in ranked]
     found.sources = {p: SOURCE_LABELS[rank] for rank, p in ranked}
     found.truncated = truncated
@@ -201,12 +207,13 @@ def _is_yeet_runtime_dir(parts: tuple[str, ...]) -> bool:
 
 
 def _rank_of_dir(parts: tuple[str, ...]) -> int | None:
-    """Is this directory (root-relative) a flow directory, and at what rank?
+    """Is this directory a flow directory, and at what rank? `parts` is ABSOLUTE.
 
     Matched on the TAIL of the path, so `.github/workflows` counts wherever it
-    appears. `()` — the root itself — is checked against the single-segment
-    chains, which is what makes `yeet scan .github/workflows` work: point the
-    tool straight at a workflow directory and it reads the files in it.
+    appears — including when it IS the directory yeet was pointed at. Using the
+    absolute parts rather than root-relative ones is what makes
+    `yeet scan .github/workflows` read the files in it: the root has no
+    root-relative parts to match against, but it still has a name.
     """
     best: int | None = None
     for chain, rank, _ in _FLOW_DIRS:
@@ -219,24 +226,36 @@ def _tail_matches(parts: tuple[str, ...], chain: tuple[str, ...]) -> bool:
     return len(parts) >= len(chain) and parts[len(parts) - len(chain) :] == chain
 
 
-def _classify(rel: Path, path: Path, found: Discovery, ranked: list[tuple[int, Path]]) -> None:
+def _classify(
+    rel: Path,
+    path: Path,
+    found: Discovery,
+    ranked: list[tuple[int, Path]],
+    *,
+    floor: int,
+) -> None:
     """One file -> foreign CI, a ranked flow, or nothing.
 
     The flow test walks the file's ancestor directories from the deepest
     upward, so `.github/workflows/reusable/build.yml` matches on
     `.github/workflows` two levels up and keeps that rank. Deepest-first also
-    means `.yeet/flows` inside a `.github/workflows` tree (nobody does this,
-    but the walk allows it) is ranked by the directory it actually sits in.
+    means the NEAREST enclosing flow directory decides: a `.yeet/flows/` nested
+    inside a `workflows/` tree is ranked as a yeet flow, not a bare one.
+
+    `floor` is `len(root.parts)` and it matters: the ancestors are absolute, so
+    without it a project living at `~/workflows/myrepo` would see EVERY yaml
+    file in it matched against the `workflows` directory above the root. The
+    floor is `len(root.parts)` and not one more, so the root's OWN name still
+    counts — that is `yeet scan .github/workflows` working.
     """
-    parts = rel.parts
-    if parts[-1] in FOREIGN_CI:
+    if rel.name in FOREIGN_CI:
         found.foreign_ci.append(path)
         return
-    if len(parts) == 1 and rel.name in ROOT_FLOW_NAMES:
+    if len(rel.parts) == 1 and rel.name in ROOT_FLOW_NAMES:
         ranked.append((_ORDER_ROOT, path))
         return
-    dirs = parts[:-1]
-    for cut in range(len(dirs), -1, -1):
+    dirs = path.parts[:-1]
+    for cut in range(len(dirs), floor - 1, -1):
         for chain, rank, suffixes in _FLOW_DIRS:
             if _tail_matches(dirs[:cut], chain) and rel.suffix in suffixes:
                 ranked.append((rank, path))

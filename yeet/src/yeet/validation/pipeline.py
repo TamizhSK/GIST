@@ -25,7 +25,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from yeet.core.diagnostics import Diagnostic, DiagnosticBag, Severity
+from yeet.core.diagnostics import Diagnostic, DiagnosticBag, Position, Severity
 from yeet.core.ir import Workflow
 
 
@@ -72,7 +72,18 @@ def validate_file(
     # --- Dialect: rewrite `vibe`/`the_grind`/`moves`/... to canonical keys (Dev A) ---
     # In place and position-preserving, so every diagnostic below still points
     # at the line the user actually wrote. Never fails, never warns.
+    #
+    # Both spellings are accepted in any file in any directory — a dialect file
+    # under `.github/workflows/` and a canonical one under `.yeet/flows/` both
+    # work, because this pass is keyed on the CONTENT and never on the path.
+    # The one thing that cannot be resolved is a mapping that uses both
+    # spellings of the same key: the rewrite is a pop-and-reinsert, so one of
+    # them would be dropped without a word. E106 refuses instead of guessing.
     from yeet.parser.aliases import normalize
+
+    bag.extend(_collisions(data, path))
+    if bag.has_errors():
+        return bag, workflow
 
     data, used_dialect = normalize(data)
 
@@ -106,6 +117,28 @@ def validate_file(
     bag.extend(run_lints(workflow, path, load_lint_config(path.parent)))
 
     return bag, workflow
+
+
+def _collisions(data: object, path: Path) -> list[Diagnostic]:
+    """E106 — one key, two spellings, in the same mapping."""
+    from yeet.parser.aliases import find_collisions
+
+    out: list[Diagnostic] = []
+    for hit in find_collisions(data):
+        written = " and ".join(f"`{s}`" for s in hit.spellings)
+        out.append(
+            Diagnostic(
+                code="YEET-E106",
+                severity=Severity.ERROR,
+                message=f"{written} are the same key — `{hit.canonical}` — written twice",
+                file=path,
+                pos=Position(hit.line, hit.col) if hit.line >= 0 else None,
+                help=f"Keep one of them. Both mean `{hit.canonical}`.",
+                note="Canonical GitHub Actions syntax and the yeet dialect can be "
+                "mixed freely in one file; the same key twice is the exception.",
+            )
+        )
+    return out
 
 
 def _build(data: object, path: Path, bag: DiagnosticBag) -> Workflow | None:

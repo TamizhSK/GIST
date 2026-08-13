@@ -126,14 +126,20 @@ def test_a5_foreign_ci_reported_not_parsed(tmp_path):
 
 
 def test_a5_depth_and_ignore_are_honoured(tmp_path):
+    """The cap still terminates a walk. It is a bound, not a layout rule.
+
+    `.github/workflows` at ANY reasonable depth is discovered now (see the
+    monorepo test below); this fixture is deliberately past MAX_DEPTH, which is
+    what stops `yeet scan ~` from reading the whole home directory.
+    """
     root = tmp_path / "depth"
     _touch(root / ".yeet" / "flows" / "main.yml")
-    _touch(root / "a" / "b" / "c" / "d" / "e" / ".github" / "workflows" / "too_deep.yml")
+    buried = root / "a" / "b" / "c" / "d" / "e" / "f" / "g"
+    _touch(buried / ".github" / "workflows" / "too_deep.yml")
     _touch(root / ".yeetignore", ".yeet/tmp\n")
 
     found = discover(root)
-    flows = found.flows
-    rels = [f.relative_to(root) for f in flows]
+    rels = [f.relative_to(root) for f in found.flows]
     assert Path(".yeet/flows/main.yml") in rels
     assert len(rels) == 1, f"expected only the top flow, got {rels}"
 
@@ -260,5 +266,9 @@ def test_a7_bare_dir_is_project_without_git(tmp_path):
     assert project.dockerfile is None
 
 
-def test_a7_max_depth_constant_is_5():
-    assert MAX_DEPTH == 5
+def test_a7_max_depth_is_deep_enough_for_a_monorepo():
+    """`apps/<svc>/<pkg>/.github/workflows/ci.yml` is five segments of nesting
+    before the flow directory even starts. The cap is a termination bound for
+    `yeet scan ~`, not a statement about where a workflow may live — the walk
+    lifts it once it is inside a flow directory."""
+    assert MAX_DEPTH >= 6

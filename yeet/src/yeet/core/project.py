@@ -30,9 +30,14 @@ class Project:
     """The result of `analyzer.project.analyze()`.
 
     `flows` is in precedence order: `.yeet/flows/` before `.github/workflows/`
-    before a root `yeet.yml`. `foreign_ci` is deliberately separate — a
-    `.gitlab-ci.yml` is worth reporting as unsupported rather than ignoring in
-    silence, and it must never be fed to the parser.
+    before a bare `workflows/` before a root `yeet.yml`, and within one rank
+    shallowest first. `foreign_ci` is deliberately separate — a `.gitlab-ci.yml`
+    is worth reporting as unsupported rather than ignoring in silence, and it
+    must never be fed to the parser.
+
+    Nothing here records which DIALECT a flow is written in. It cannot: that is
+    a property of the file's contents, not of its location, and both spellings
+    are legal in every one of these directories.
     """
 
     root: Path
@@ -45,10 +50,22 @@ class Project:
     truncated: bool = False
     """True when discovery hit MAX_FILES and stopped. The scan report has to say
     so — silently reporting half a monorepo is worse than reporting none of it."""
+    flow_sources: dict[Path, str] = field(default_factory=dict)
+    """flow -> the layout convention that found it (`analyzer.discover`)."""
 
     @property
     def has_flows(self) -> bool:
         return bool(self.flows)
+
+    def source_of(self, flow: Path) -> str:
+        """Which layout convention found this flow — see `analyzer.discover`.
+
+        `yeet scan` prints it so a user who did not expect
+        `docs/workflows/example.yml` to be picked up can see the rule that
+        picked it, rather than wondering why the count is one higher than the
+        number of workflows they think they have.
+        """
+        return self.flow_sources.get(flow, "")
 
     @property
     def stack(self) -> str:

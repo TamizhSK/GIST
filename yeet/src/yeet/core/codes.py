@@ -56,6 +56,7 @@ RULES: dict[str, Rule] = {
         _e("E103", "top-level document is not a mapping", 1),
         _e("E104", "multi-document YAML is not allowed", 1),
         _w("W105", "unquoted `on` parsed as a boolean", 1),
+        _e("E106", "the same key written twice, once in the dialect", 1),
         # Layer 2 — schema
         _e("E201", "unknown key", 2),
         _e("E202", "required key missing", 2),
