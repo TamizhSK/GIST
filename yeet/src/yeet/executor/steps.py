@@ -152,6 +152,7 @@ def run_steps(config: StepLoopConfig, executor: StepExec) -> list[StepResult]:
         name = label(step)
 
         if failed:
+            _lifecycle_skip(config, name)
             _conclude(config, step, Status.SKIPPED)
             results.append(StepResult(step_name=name, status=Status.SKIPPED))
             continue
@@ -163,6 +164,7 @@ def run_steps(config: StepLoopConfig, executor: StepExec) -> list[StepResult]:
         step_ctx, step_env = _step_contexts(config, step, exported)
 
         if not truthy(step.if_, step_ctx, config.degraded):
+            _lifecycle_skip(config, name)
             _emit(config, name, META, "skipped (not the vibe): `if` was false")
             _conclude(config, step, Status.SKIPPED)
             results.append(StepResult(step_name=name, status=Status.SKIPPED))
@@ -407,6 +409,7 @@ def _run_one(
         timeout_s=step.timeout_minutes * 60 if step.timeout_minutes else None,
     )
 
+    _step_started(config, name)
     _emit(config, name, META, f"::group::{name}")
     try:
         exit_code, stream = executor.exec_step(request)
@@ -432,11 +435,14 @@ def _run_one(
     if status is Status.FAILURE and step.continue_on_error:
         _emit(config, name, META, f"flopped (exit {exit_code}) but `delulu: true` — carrying on")
 
+    duration_s = time.monotonic() - started
+    _step_ended(config, name, status, duration_s, exit_code)
+
     return StepResult(
         step_name=name,
         status=status,
         exit_code=exit_code,
-        duration_s=time.monotonic() - started,
+        duration_s=duration_s,
         outputs=dict(back[state_files.OUTPUT]),
     )
 
@@ -533,6 +539,39 @@ def _handle_command(config: StepLoopConfig, step_name: str, command: Command) ->
         return True
 
     return False
+
+
+def _step_started(config: StepLoopConfig, step_name: str) -> None:
+    """Tells a live renderer "this step now exists and is running" before the
+    first line of its output arrives — the tree node (and its spinner) should
+    not have to wait on `::group::` to know the step started."""
+    if config.sink is None:
+        return
+    config.sink.emit(LogEvent.step_started(config.job_key, step_name))
+
+
+def _step_ended(
+    config: StepLoopConfig, step_name: str, status: Status, duration_s: float, exit_code: int | None
+) -> None:
+    if config.sink is None:
+        return
+    config.sink.emit(
+        LogEvent.step_ended(
+            config.job_key,
+            step_name,
+            status=status.value,
+            duration_s=duration_s,
+            exit_code=exit_code,
+        )
+    )
+
+
+def _lifecycle_skip(config: StepLoopConfig, step_name: str) -> None:
+    """A step that never ran (its `if:` was false, an upstream step flopped, or
+    it needs a resolver we don't have) still gets a start/end pair, so the tree
+    shows a skipped node instead of nothing."""
+    _step_started(config, step_name)
+    _step_ended(config, step_name, Status.SKIPPED, 0.0, None)
 
 
 def _emit(config: StepLoopConfig, step_name: str, stream: str, text: str) -> None:

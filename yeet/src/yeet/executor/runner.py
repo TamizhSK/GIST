@@ -129,8 +129,11 @@ def _run_wave(
         upstream = _upstream(inst, state)
         blocked = _blocking_failure(inst, upstream)
         if blocked is not None:
-            state.record(inst, _skipped(inst))
+            result = _skipped(inst)
+            state.record(inst, result)
+            _job_started(options, inst.key)
             _note(options, inst.key, f"skipped (not the vibe): {blocked}")
+            _job_ended(options, inst.key, result)
             continue
 
         # Per INSTANCE, not per run. `Contexts` is mutable and the jobs of a
@@ -149,6 +152,7 @@ def _run_wave(
             builtins=options.builtins,
             run_id=layout.run_id,
         )
+        _job_started(options, inst.key)
         futures[pool.submit(backend.run_job, inst, ctx)] = inst
 
     _collect(futures, options, state)
@@ -205,8 +209,10 @@ def _collect(
 
     for future, inst in futures.items():
         if inst.job.key in cancelled_jobs and future.cancel():
-            state.record(inst, _skipped(inst))
+            result = _skipped(inst)
+            state.record(inst, result)
             _note(options, inst.key, "cancelled (fail-fast)")
+            _job_ended(options, inst.key, result)
             continue
 
         try:
@@ -216,6 +222,7 @@ def _collect(
             result = _failed(inst, f"{type(exc).__name__}: {exc}")
 
         state.record(inst, result)
+        _job_ended(options, inst.key, result)
 
         if result.status is Status.FAILURE and _fail_fast(inst):
             cancelled_jobs.add(inst.job.key)
@@ -284,4 +291,21 @@ def _note(options: RunOptions, job_key: str, text: str) -> None:
         return
     options.sink.emit(
         LogEvent.now(job=job_key, step="", stream=META, text=options.masker.mask(text))
+    )
+
+
+def _job_started(options: RunOptions, job_key: str) -> None:
+    if options.sink is None:
+        return
+    options.sink.emit(LogEvent.job_started(job_key))
+
+
+def _job_ended(options: RunOptions, job_key: str, result: JobResult) -> None:
+    """Fired for every instance exactly once — success, failure, skip, or
+    cancellation are all just a `JobResult`, so a live renderer can close out
+    the job's tree node the same way regardless of why it stopped."""
+    if options.sink is None:
+        return
+    options.sink.emit(
+        LogEvent.job_ended(job_key, status=result.status.value, duration_s=result.duration_s)
     )

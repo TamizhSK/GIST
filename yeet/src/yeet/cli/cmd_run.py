@@ -26,20 +26,19 @@ import typer
 
 from yeet.cli import EXIT_BAD_WORKFLOW, EXIT_NO_DOCKER, color_enabled
 from yeet.core.diagnostics import DiagnosticBag
-from yeet.core.events import FanOut, LogSink
+from yeet.core.events import FanOut
 from yeet.core.ir import Workflow
 from yeet.core.masking import Masker
 from yeet.core.project import Project
-from yeet.core.result import RunResult, Status
 from yeet.executor.backend import Backend, DockerUnavailable
 from yeet.executor.docker_backend import DockerBackend
 from yeet.executor.images import ImageKind, ImageResolutionError, resolve_image
 from yeet.executor.local_backend import LocalBackend
 from yeet.executor.runner import RunOptions, run_plan
-from yeet.executor.workspace import RunLayout, create
+from yeet.executor.workspace import create
 from yeet.expressions.contexts import Contexts, build_github_context
 from yeet.planner.plan import ExecutionPlan, build_plan
-from yeet.reporting.console import RunConsole
+from yeet.reporting.live import make_console
 from yeet.storage.builtin import run_builtin
 from yeet.storage.runs import RunStore
 from yeet.validation.pipeline import validate_file
@@ -101,6 +100,13 @@ def run(
     layout = create(root)
 
     backend = _backend(root, project, workflow)
+    # `make_console` picks the live tree for a real terminal, plain lines
+    # otherwise. Either way it sits beside `RunStore` in a `FanOut`, which is
+    # what makes `.yeet/runs/` non-empty and `yeet logs` able to answer —
+    # both halves of that were written independently and only wired together
+    # here. A failing sink is counted, not raised: a full disk should cost the
+    # log file, not the run.
+    console_sink = make_console(color=color_enabled(ctx), verbose=verbose)
     options = RunOptions(
         root=root,
         workflow_name=workflow.display_name,
@@ -108,22 +114,31 @@ def run(
         max_workers=jobs or os.cpu_count(),
         workflow_env=dict(workflow.env),
         masker=masker,
-        # The one place that knows both halves: `storage` implements the
-        # built-in actions, the executor runs them, and the tier contract keeps
-        # those two from importing each other. See `core/builtins.py`.
-        builtins=run_builtin,
         sink=_sink(layout, color=color_enabled(ctx)),
         contexts=contexts,
         layout=layout,
     )
 
+    # `console_sink` owns a `rich.live.Live` region on a real terminal (a
+    # no-op start/stop on a plain pipe) — it has to be open for the whole run
+    # so events streaming in from the runner's thread pool land in it, and
+    # closed before anything else touches the terminal, success or not.
+    console_sink.start()
     try:
         result = run_plan(plan, backend, options)
     except DockerUnavailable as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(EXIT_NO_DOCKER) from exc
+    finally:
+        console_sink.stop()
 
-    _report(result)
+    console_sink.render_summary(
+        result.workflow_name,
+        result.status.value,
+        result.duration_s,
+        run_id=result.run_id,
+        job_count=len(result.jobs),
+    )
     raise typer.Exit(result.exit_code)
 
 
@@ -208,24 +223,6 @@ def _backend(root: Path, project: Project, workflow: Workflow) -> Backend:
     return DockerBackend(root, project=project)
 
 
-def _sink(layout: RunLayout, *, color: bool) -> LogSink:
-    """The live tree, and the JSONL store that makes `yeet logs` work.
-
-    §3.2's fan-out, finally both halves of it: `RunStore` was written (D23) and
-    `yeet logs` reads it (D24), but nothing had ever constructed one, so every
-    run left `.yeet/runs/` empty and `logs` always answered "no run logs found".
-
-    FanOut counts a failing sink instead of raising, so a full disk costs us the
-    replay and not the run.
-
-    Note what is NOT filtered here: `META` events. They carry "skipped (not the
-    vibe)", "timed out", and "flopped but `delulu: true` — carrying on", which
-    is precisely what a user needs to see. `-v` prints the plan up front
-    instead of hiding half the run's commentary behind a flag.
-    """
-    return FanOut(sinks=[RunConsole(color=color), RunStore(layout.root, layout.run_id)])
-
-
 def _echo_plan(plan: ExecutionPlan) -> None:
     """`-v`: what we are about to do, before we do it."""
     total = sum(len(wave) for wave in plan.waves)
@@ -287,10 +284,3 @@ def _parse_secrets(pairs: list[str]) -> dict[str, str]:
             out[key.strip()] = value
     return out
 
-
-def _report(result: RunResult) -> None:
-    verdict = "slayed" if result.status is Status.SUCCESS else "flopped"
-    typer.echo(
-        f"\nflow: {result.workflow_name} — {verdict.upper()} in {result.duration_s:.1f}s "
-        f"({len(result.jobs)} job(s), run {result.run_id})"
-    )
