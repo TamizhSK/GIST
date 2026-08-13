@@ -50,20 +50,6 @@ def write_step_script(text: str, dest: Path) -> None:
     dest.write_bytes(text.replace("\r\n", "\n").encode("utf-8"))
 
 
-<<<<<<< HEAD
-def default_shell(*, in_container: bool) -> str:
-    """The shell a step with no `shell:` runs under, resolved once.
-
-    In a container it is always bash — we control the image. On the host it
-    follows the platform; on Windows it is pwsh when installed and the
-    PowerShell the OS ships otherwise (plan.md C13).
-    """
-    if in_container:
-        return DEFAULT_CONTAINER_SHELL
-    if not is_windows():
-        return DEFAULT_POSIX_SHELL
-    return DEFAULT_WINDOWS_SHELL if shutil.which("pwsh") else WINDOWS_FALLBACK_SHELL
-=======
 def resolve_shell(shell: str | None, *, in_container: bool) -> str:
     """The shell a step actually gets, with the platform default applied.
 
@@ -76,14 +62,19 @@ def resolve_shell(shell: str | None, *, in_container: bool) -> str:
 
     Two functions deriving the same default independently is the shape of the
     bug; deleting the second derivation is the fix.
+
+    On the host, Windows defaults to pwsh when installed and the PowerShell the
+    OS ships otherwise (plan.md C13) — a stock Windows box without PowerShell
+    Core must still be able to run `cooked_on: local` jobs.
     """
     name = (shell or "").strip().lower()
     if name:
         return name
     if in_container:
         return DEFAULT_CONTAINER_SHELL
-    return DEFAULT_WINDOWS_SHELL if platform_.is_windows() else DEFAULT_POSIX_SHELL
->>>>>>> 5aab5fde80e2fc01b3630d46a03f73162480e4f5
+    if not platform_.is_windows():
+        return DEFAULT_POSIX_SHELL
+    return DEFAULT_WINDOWS_SHELL if shutil.which("pwsh") else WINDOWS_FALLBACK_SHELL
 
 
 def shell_argv(shell: str | None, script_path: str, *, in_container: bool) -> list[str]:
@@ -97,32 +88,13 @@ def shell_argv(shell: str | None, script_path: str, *, in_container: bool) -> li
     reaches Git Bash rather than System32's WSL launcher. Inside a container it
     is a no-op — the image is Linux and `bash` means bash there.
     """
-<<<<<<< HEAD
-    name = (shell or "").strip().lower()
-    if not name:
-        name = default_shell(in_container=in_container)
-    argv = list(_ARGV.get(name, ["bash", "-e"]))
-=======
     argv = list(_ARGV.get(resolve_shell(shell, in_container=in_container), ["bash", "-e"]))
     if not in_container:
         argv[0] = platform_.shell_executable(argv[0])
->>>>>>> 5aab5fde80e2fc01b3630d46a03f73162480e4f5
     argv.append(script_path)
     return argv
 
 
-<<<<<<< HEAD
-def script_suffix(shell: str | None, *, in_container: bool = False) -> str:
-    """`.sh`, `.ps1`, `.py` — pwsh refuses to run a file without `.ps1`.
-
-    The suffix and the argv must resolve the default the same way, or the host
-    gets a `.sh` file handed to pwsh — which refuses it.
-    """
-    name = (shell or "").strip().lower()
-    if not name:
-        name = default_shell(in_container=in_container)
-    return SUFFIXES.get(name, ".sh")
-=======
 def script_suffix(shell: str | None, *, in_container: bool) -> str:
     """`.sh`, `.ps1`, `.py` — pwsh refuses to run a file without `.ps1`.
 
@@ -131,4 +103,3 @@ def script_suffix(shell: str | None, *, in_container: bool) -> str:
     would silently reintroduce the Windows bug the moment someone forgot it.
     """
     return SUFFIXES.get(resolve_shell(shell, in_container=in_container), ".sh")
->>>>>>> 5aab5fde80e2fc01b3630d46a03f73162480e4f5

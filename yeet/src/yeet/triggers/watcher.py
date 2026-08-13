@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import contextlib
 import os
-import sys
 import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
@@ -145,25 +144,6 @@ class ProjectLock:
 
 
 def _pid_alive(pid: int) -> bool:
-<<<<<<< HEAD
-    """True if a process with this pid is running.
-
-    `os.kill(pid, 0)` is the POSIX aliveness probe; on Windows it calls
-    TerminateProcess and would kill the very holder the lock is meant to
-    respect. Open the process instead.
-    """
-    if sys.platform == "win32":
-        return _win_pid_alive(pid)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # exists, owned by someone else
-    except OSError:
-        return False
-    return True
-=======
     """Delegates to `executor.platform_`, where the OS branches live.
 
     This was `os.kill(pid, 0)`, which probes on POSIX and **terminates** on
@@ -172,7 +152,6 @@ def _pid_alive(pid: int) -> bool:
     sys.platform ==` in the codebase belongs in this file or in `paths.py`."
     """
     return platform_pid_alive(pid)
->>>>>>> 5aab5fde80e2fc01b3630d46a03f73162480e4f5
 
 
 def _win_pid_alive(pid: int) -> bool:

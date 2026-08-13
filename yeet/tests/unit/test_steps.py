@@ -300,7 +300,7 @@ def test_the_script_on_disk_has_no_carriage_returns(tmp_path):
         / "run-1"
         / "build"
         / "step-1"
-        / f"script{script_suffix(None, in_container=False)}"
+        / f"script{script_suffix('bash', in_container=False)}"
     ).read_bytes()
     assert b"\r" not in written
 
@@ -331,6 +331,9 @@ def test_on_windows_the_script_is_written_where_pwsh_can_run_it(tmp_path, monkey
     from yeet.executor import script as script_mod
 
     monkeypatch.setattr(script_mod.platform_, "is_windows", lambda: True)
+    monkeypatch.setattr(
+        script_mod.shutil, "which", lambda name: "C:/pwsh.exe" if name == "pwsh" else None
+    )
 
     job = make_job(steps=[make_step("echo hi")])
     config = build_config(tmp_path, job)

@@ -33,8 +33,7 @@ def test_container_default_is_bash_with_pipefail():
 
 
 def test_local_default_follows_the_host(monkeypatch):
-<<<<<<< HEAD
-    monkeypatch.setattr(script, "is_windows", lambda: True)
+    monkeypatch.setattr(script.platform_, "is_windows", lambda: True)
     monkeypatch.setattr(
         script.shutil, "which", lambda name: "C:/pwsh.exe" if name == "pwsh" else None
     )
@@ -43,23 +42,6 @@ def test_local_default_follows_the_host(monkeypatch):
     # plan.md C13: pwsh, with the PowerShell the OS ships as the fallback.
     monkeypatch.setattr(script.shutil, "which", lambda name: None)
     assert script.shell_argv(None, "s.ps1", in_container=False)[0] == "powershell"
-
-    monkeypatch.setattr(script, "is_windows", lambda: False)
-    assert script.shell_argv(None, "s.sh", in_container=False)[0] == "bash"
-
-
-def test_the_default_suffix_matches_the_default_shell(monkeypatch):
-    """A `.sh` handed to pwsh is refused; the suffix must resolve the same default."""
-    monkeypatch.setattr(script, "is_windows", lambda: True)
-    monkeypatch.setattr(script.shutil, "which", lambda name: "C:/pwsh.exe")
-    assert script.script_suffix(None, in_container=False) == ".ps1"
-
-    monkeypatch.setattr(script.shutil, "which", lambda name: None)
-    assert script.script_suffix(None, in_container=False) == ".ps1"  # powershell too
-
-=======
-    monkeypatch.setattr(script.platform_, "is_windows", lambda: True)
-    assert script.shell_argv(None, "s.ps1", in_container=False)[0] == "pwsh"
 
     monkeypatch.setattr(script.platform_, "is_windows", lambda: False)
     assert script.shell_argv(None, "s.sh", in_container=False)[0] == "bash"
@@ -77,6 +59,7 @@ def test_the_suffix_matches_the_shell_that_will_run_it(monkeypatch):
     two answers have to be checked TOGETHER or the pair can drift again.
     """
     monkeypatch.setattr(script.platform_, "is_windows", lambda: True)
+    monkeypatch.setattr(script.shutil, "which", lambda name: "C:/pwsh.exe")
     assert script.shell_argv(None, "s", in_container=False)[0] == "pwsh"
     assert script.script_suffix(None, in_container=False) == ".ps1"
 
@@ -89,7 +72,6 @@ def test_a_container_step_is_bash_even_on_a_windows_host(monkeypatch):
     """The image is Linux whatever the host is, so the pair must be bash/.sh."""
     monkeypatch.setattr(script.platform_, "is_windows", lambda: True)
     assert script.shell_argv(None, "/workspace/s", in_container=True)[0] == "bash"
->>>>>>> 5aab5fde80e2fc01b3630d46a03f73162480e4f5
     assert script.script_suffix(None, in_container=True) == ".sh"
 
 
