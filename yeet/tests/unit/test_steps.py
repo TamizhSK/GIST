@@ -245,16 +245,88 @@ def test_group_directives_become_meta_events(tmp_path):
     assert "npm output" in text
 
 
-def test_a_uses_step_is_reported_not_silently_passed(tmp_path):
-    """Dev A's resolver is not here yet — say so rather than claim success."""
+def test_an_unresolvable_uses_step_is_reported_not_silently_passed(tmp_path):
+    """No such action here — skip it, and say which one and why.
+
+    This used to assert the message named `actions.resolver (Dev A, A17)`.
+    A17 landed four sessions before anything called it, so the seam outlived
+    its blocker and every `uses:` step in every workflow was skipped.
+    """
     sink = ListSink()
-    job = make_job(steps=[make_step(None, uses="./.yeet/actions/checkout")])
+    job = make_job(steps=[make_step(None, uses="./.yeet/actions/nope")])
     config = build_config(tmp_path, job, sink=sink)
 
     results = run_steps(config, FakeExec())
 
     assert results[0].status is Status.SKIPPED
-    assert "actions.resolver" in sink.text()
+    assert "./.yeet/actions/nope" in sink.text()
+    assert "actions.resolver" not in sink.text()
+
+
+def test_a_docker_action_says_it_is_a_docker_action(tmp_path):
+    """C15 is genuinely not built. The message should name the reason, not a
+    developer and a ticket that closed."""
+    sink = ListSink()
+    job = make_job(steps=[make_step(None, uses="docker://alpine:3.19")])
+    config = build_config(tmp_path, job, sink=sink)
+
+    results = run_steps(config, FakeExec())
+
+    assert results[0].status is Status.SKIPPED
+    assert "docker action" in sink.text()
+
+
+def test_a_composite_action_runs_its_steps_in_place(tmp_path):
+    """The point of A17/A19, unreachable until `uses:` was wired.
+
+    We ship `.yeet/actions/checkout` ourselves so the demo has no external
+    dependency; before this, using it did nothing at all.
+    """
+    action = tmp_path / ".yeet" / "actions" / "greet"
+    action.mkdir(parents=True)
+    (action / "action.yml").write_text(
+        "name: greet\n"
+        "inputs:\n"
+        "  who:\n"
+        "    description: who to greet\n"
+        "    default: world\n"
+        "runs:\n"
+        "  using: composite\n"
+        "  steps:\n"
+        "    - run: echo hello $INPUT_WHO\n"
+        "    - run: echo second\n",
+        encoding="utf-8",
+    )
+
+    sink = ListSink()
+    job = make_job(steps=[make_step(None, uses="./.yeet/actions/greet", with_={"who": "yeet"})])
+    config = build_config(tmp_path, job, sink=sink)
+
+    results = run_steps(config, FakeExec())
+
+    assert [r.status for r in results] == [Status.SUCCESS, Status.SUCCESS]
+    assert len(results) == 2, "the composite's two steps each get their own result"
+
+
+def test_a_composite_step_inherits_continue_on_error(tmp_path):
+    action = tmp_path / ".yeet" / "actions" / "flaky"
+    action.mkdir(parents=True)
+    (action / "action.yml").write_text(
+        "name: flaky\nruns:\n  using: composite\n  steps:\n    - run: exit 1\n",
+        encoding="utf-8",
+    )
+
+    job = make_job(
+        steps=[
+            make_step(None, uses="./.yeet/actions/flaky", continue_on_error=True),
+            make_step("echo after"),
+        ]
+    )
+    config = build_config(tmp_path, job)
+
+    results = run_steps(config, FakeExec((1, out(""))))
+
+    assert results[-1].step_name == "Run echo after", "the run must not stop"
 
 
 def test_a_backend_exception_fails_the_step_rather_than_the_run(tmp_path):

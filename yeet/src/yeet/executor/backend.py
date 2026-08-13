@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from yeet.core.builtins import BuiltinRunner
 from yeet.core.events import LogSink
 from yeet.core.masking import Masker
 from yeet.core.result import JobResult
@@ -36,6 +37,10 @@ class JobContext:
     sink: LogSink | None = None
     needs: dict[str, JobResult] = field(default_factory=dict)
     event: str = "push"
+    builtins: BuiltinRunner | None = None
+    """Runs `actions/cache` / `upload-artifact`. Same indirection as `sink` and
+    for the same reason: the implementation is in `storage`, which this tier may
+    not import. `cli/cmd_run` supplies it."""
     contexts: Contexts | None = None
     """Dev B's evaluation contexts, for `${{ }}` in `run:` and step-level `if:`.
 

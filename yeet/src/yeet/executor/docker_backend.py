@@ -23,6 +23,7 @@ from yeet.core.result import JobResult, Status, StepResult
 from yeet.executor import build as build_mod
 from yeet.executor import env as env_mod
 from yeet.executor.backend import JobContext, get_docker_client
+from yeet.executor.build import project_slug
 from yeet.executor.images import ImageKind, ImageResolutionError, ImageSpec, resolve_image
 from yeet.executor.paths import CONTAINER_WORKSPACE, to_container_path, to_workspace_path
 from yeet.executor.platform_ import docker_user
@@ -41,6 +42,14 @@ KEEPALIVE_CMD = ["tail", "-f", "/dev/null"]
 
 CONTAINER_PREFIX = "yeet"
 STOP_TIMEOUT_S = 5
+NAME_MAX = 63
+"""Docker's limit for a container name. Truncating here beats a 500 from the
+daemon on a project with a long directory name and a long job key."""
+
+LABEL_PROJECT = "yeet.project"
+LABEL_PROJECT_PATH = "yeet.project.path"
+LABEL_RUN = "yeet.run"
+LABEL_JOB = "yeet.job"
 
 _LIVE: dict[str, Any] = {}
 _LIVE_LOCK = threading.Lock()
@@ -208,6 +217,7 @@ class DockerBackend:
             to_step_path=lambda path: to_workspace_path(path, self.root),
             sink=ctx.sink,
             contexts=ctx.contexts,
+            builtins=ctx.builtins,
             in_container=True,
         )
 
@@ -226,7 +236,7 @@ class DockerBackend:
                 duration_s=time.monotonic() - started,
             )
 
-        container = self._create(image, inst, base)
+        container = self._create(image, inst, base, layout.run_id)
         try:
             container.start()
             results = run_steps(config, DockerExec(self.client, container))
@@ -253,17 +263,25 @@ class DockerBackend:
             _note(config, f"building {tag}")
             return str(build_mod.ensure_built(self.client, spec))
 
-        if not build_mod.image_exists(self.client, spec.reference):
-            _note(config, f"pulling {spec.reference}")
-            self.client.images.pull(spec.reference)
-        return spec.reference
+        # Through `ensure_pulled`, not `images.pull` directly: every leg of a
+        # matrix wants the same image at the same moment, and N identical
+        # concurrent pulls cost N times the bandwidth for one image. The notify
+        # callback fires only for the thread that actually pulls, so the line
+        # appears once.
+        return str(
+            build_mod.ensure_pulled(
+                self.client,
+                spec.reference,
+                lambda ref: _note(config, f"pulling {ref}"),
+            )
+        )
 
-    def _create(self, image: str, inst: JobInstance, base: dict[str, str]) -> Any:
+    def _create(self, image: str, inst: JobInstance, base: dict[str, str], run_id: str) -> Any:
         source = to_container_path(self.root.resolve())
         container = self.client.containers.create(
             image=image,
             command=KEEPALIVE_CMD,
-            name=f"{CONTAINER_PREFIX}-{slug(inst.key)}-{int(time.time() * 1000) % 1_000_000}",
+            name=container_name(self.root, run_id, inst.key),
             working_dir=CONTAINER_WORKSPACE,
             volumes={source: {"bind": CONTAINER_WORKSPACE, "mode": "rw"}},
             environment=base,
@@ -273,9 +291,60 @@ class DockerBackend:
             network_mode="bridge",
             auto_remove=False,
             tty=False,
+            labels=project_labels(self.root, run_id, inst.key),
         )
         _track(container)
         return container
+
+
+def container_name(root: Path, run_id: str, job_key: str) -> str:
+    """`yeet-<project>-<hash>-<run>-<job>`, unique across projects and runs.
+
+    The name used to end in `int(time.time() * 1000) % 1_000_000`, which is a
+    17-minute cycle: two runs of the same job seventeen minutes apart could
+    collide, and Docker refuses a duplicate name. The run id is already unique
+    per run and the job key unique within one, so the pair needs no clock.
+    """
+    return f"{CONTAINER_PREFIX}-{project_slug(root)}-{slug(run_id)}-{slug(job_key)}"[:NAME_MAX]
+
+
+def reap_project(client: Any, root: Path) -> list[str]:
+    """Remove leftover containers belonging to THIS project. Returns names.
+
+    The in-process registry plus atexit covers a run that ends, is killed, or
+    crashes. It cannot cover the machine losing power mid-`npm ci`, and a
+    stopped container still holds its writable layer and its name — so the next
+    run of that job hits "name already in use" and cannot start. The label is
+    what makes finding them possible without guessing from name prefixes.
+    """
+    removed: list[str] = []
+    try:
+        containers = client.containers.list(
+            all=True, filters={"label": f"{LABEL_PROJECT}={project_slug(root)}"}
+        )
+    except Exception:  # noqa: BLE001 - nothing to reap if we cannot list
+        return removed
+    for container in containers:
+        if container.id in _LIVE:
+            continue  # a run in another terminal is using it right now
+        _force_remove(container)
+        removed.append(str(getattr(container, "name", container.id)))
+    return removed
+
+
+def project_labels(root: Path, run_id: str, job_key: str) -> dict[str, str]:
+    """Labels so a container can be traced back to a project, run and job.
+
+    This is what makes `yeet prune` able to clean up ONE project rather than
+    every container the tool has ever started on this machine — including a
+    colleague's run that is still going in another checkout.
+    """
+    return {
+        LABEL_PROJECT: project_slug(root),
+        LABEL_PROJECT_PATH: str(root.resolve()),
+        LABEL_RUN: run_id,
+        LABEL_JOB: job_key,
+    }
 
 
 def _note(config: StepLoopConfig, text: str) -> None:

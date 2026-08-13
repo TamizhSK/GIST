@@ -96,6 +96,19 @@ def resolve_image(job: Job, project: Project) -> ImageSpec:
                 project,
                 note=f"no cooked_on set -> found ./{project.dockerfile.name} -> building",
             )
+        # No Dockerfile either: use the image the project's OWN stack implies.
+        # The analyzer already fingerprinted it — `pyproject.toml` means
+        # `python:3.12`, `package.json` means `node:20` — and running a Python
+        # project's tests in a bare Ubuntu that has no Python is a failure the
+        # user cannot act on. This is what "point it at any repo" costs.
+        fingerprinted = _ecosystem_image(project)
+        if fingerprinted is not None:
+            image, marker = fingerprinted
+            return ImageSpec(
+                kind=ImageKind.PULL,
+                reference=image,
+                note=f"no cooked_on set -> found {marker} -> {image}",
+            )
         raise ImageResolutionError(_e315(job, "no `cooked_on:` and no Dockerfile in the project"))
 
     lowered = runs_on.lower()
@@ -118,6 +131,21 @@ def resolve_image(job: Job, project: Project) -> ImageSpec:
     raise ImageResolutionError(
         _e315(job, f"`cooked_on: {runs_on}` is not a known runner label or image")
     )
+
+
+def _ecosystem_image(project: Project) -> tuple[str, str] | None:
+    """(image, marker filename) from the fingerprint, or None.
+
+    First ecosystem that suggests one wins; `Dockerfile`/`compose` carry an
+    empty suggestion because they are infrastructure, not a stack, and a
+    polyglot repo takes the first detected rather than trying to merge two
+    images into one — there is no such image, and guessing produces a container
+    that is wrong in a way the user cannot see.
+    """
+    for ecosystem in project.ecosystems:
+        if ecosystem.suggested_image:
+            return ecosystem.suggested_image, ecosystem.marker.name
+    return None
 
 
 def _looks_like_image(value: str) -> bool:

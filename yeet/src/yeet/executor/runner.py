@@ -25,6 +25,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from yeet.core.builtins import BuiltinRunner
 from yeet.core.events import META, LogEvent, LogSink
 from yeet.core.masking import Masker
 from yeet.core.result import JobResult, RunResult, Status, StepResult
@@ -60,6 +61,9 @@ class RunOptions:
     invisible to every step under it."""
     masker: Masker = field(default_factory=Masker)
     sink: LogSink | None = None
+    builtins: BuiltinRunner | None = None
+    """`storage.builtin.run_builtin`, passed down by `cmd_run`. See
+    `core/builtins.py` for why it is injected rather than imported."""
     contexts: Contexts | None = None
     run_id: str = ""
     layout: RunLayout | None = None
@@ -142,6 +146,7 @@ def _run_wave(
             needs=upstream,
             event=options.event,
             contexts=contexts,
+            builtins=options.builtins,
             run_id=layout.run_id,
         )
         futures[pool.submit(backend.run_job, inst, ctx)] = inst

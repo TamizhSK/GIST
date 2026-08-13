@@ -130,3 +130,58 @@ def test_prune_only_removes_our_images():
     removed = build.prune(client)
     assert removed == ["yeet-local/proj:abc123"]
     assert "node:20" in client.images.existing
+
+
+def test_concurrent_jobs_prepare_one_image_once():
+    """A matrix is N jobs and one image. Without the per-reference lock all N
+    discover it missing at the same moment and all N build or pull it: the
+    daemon serialises the work anyway, so the run pays several times over for
+    one image and the log interleaves N copies of the same output."""
+    import threading
+
+    from yeet.executor import build as build_mod
+
+    calls: list[str] = []
+    notices: list[str] = []
+    barrier = threading.Barrier(5)
+    present = threading.Event()
+
+    class Client:
+        class images:  # noqa: N801 - mirrors the docker SDK's shape
+            @staticmethod
+            def get(reference):
+                if not present.is_set():
+                    raise KeyError(reference)
+                return object()
+
+    def prepare():
+        calls.append("prepared")
+        present.set()
+
+    def worker():
+        barrier.wait()
+        build_mod._prepare_once(Client(), "img:1", prepare, notices.append)
+
+    threads = [threading.Thread(target=worker) for _ in range(5)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert calls == ["prepared"], "five jobs, one build"
+    assert notices == ["img:1"], "and one line about it in the log"
+
+
+def test_two_projects_with_the_same_directory_name_do_not_share_a_tag(tmp_path):
+    """`~/work/api` and `~/oss/api` are different projects. Sharing an image
+    repository would mean `yeet prune` in one deletes the other's cache."""
+    from yeet.executor.build import project_slug
+
+    a = tmp_path / "work" / "api"
+    b = tmp_path / "oss" / "api"
+    a.mkdir(parents=True)
+    b.mkdir(parents=True)
+
+    assert project_slug(a) != project_slug(b)
+    assert project_slug(a).startswith("api-")
+    assert project_slug(a) == project_slug(a), "and it is stable"

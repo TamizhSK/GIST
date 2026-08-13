@@ -22,8 +22,10 @@ import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
+from yeet.core.builtins import BuiltinContext, BuiltinResult, BuiltinRunner
+from yeet.core.diagnostics import DiagnosticBag
 from yeet.core.events import META, STDERR, STDOUT, LogEvent, LogSink
 from yeet.core.ir import Job, Step
 from yeet.core.masking import Masker
@@ -110,6 +112,10 @@ class StepLoopConfig:
     sink: LogSink | None = None
     contexts: Contexts | None = None
     in_container: bool = True
+    builtins: BuiltinRunner | None = None
+    """Runs `actions/cache` and friends. Injected by `cli/cmd_run` because the
+    tier contract forbids the executor importing `storage` — see
+    `core/builtins.py`."""
     degraded: Degradation = field(default_factory=Degradation)
     step_outputs: dict[str, dict[str, str]] = field(default_factory=dict)
     """`{step.id: {name: value}}` — what `steps.<id>.outputs.<k>` and a job's
@@ -130,9 +136,19 @@ def run_steps(config: StepLoopConfig, executor: StepExec) -> list[StepResult]:
     results: list[StepResult] = []
     exported: dict[str, str] = {}
     path_entries: list[str] = []
+    post: list[Callable[[], None]] = []
     failed = False
 
-    for index, step in enumerate(config.job.steps, start=1):
+    # A composite `uses:` splices its own steps in at this point, so the list
+    # is walked as a queue rather than iterated: inlining while iterating a
+    # list you are also appending to is how a composite action silently runs
+    # twice.
+    queue: list[Step] = list(config.job.steps)
+    index = 0
+
+    while queue:
+        step = queue.pop(0)
+        index += 1
         name = label(step)
 
         if failed:
@@ -153,11 +169,14 @@ def run_steps(config: StepLoopConfig, executor: StepExec) -> list[StepResult]:
             continue
 
         if step.uses and not step.run:
-            # Dev A's resolver (A17) expands `uses:` into runnable steps before
-            # we ever see it. Until that lands, say so rather than pretend.
-            _emit(config, name, META, f"`uses: {step.uses}` needs actions.resolver (Dev A, A17)")
-            _conclude(config, step, Status.SKIPPED)
-            results.append(StepResult(step_name=name, status=Status.SKIPPED))
+            outcome = _run_uses(config, step, name, post)
+            if isinstance(outcome, list):
+                queue[:0] = outcome  # a composite: run its steps in its place
+                index -= 1  # the `uses:` line is not itself a step that ran
+                continue
+            results.append(outcome)
+            if outcome.status is Status.FAILURE and not step.continue_on_error:
+                failed = True
             continue
 
         result = _run_one(
@@ -175,7 +194,114 @@ def run_steps(config: StepLoopConfig, executor: StepExec) -> list[StepResult]:
         if result.status is Status.FAILURE and not step.continue_on_error:
             failed = True
 
+    # POST actions, newest first — GitHub's order, and the one that matters:
+    # a cache registered by a later step is saved before one registered
+    # earlier, so an inner cache cannot be clobbered by an outer one. They run
+    # even when the job failed, because a cache of a half-finished build is
+    # still worth more than no cache, and an artifact of a failed run is often
+    # the only evidence of why it failed.
+    for action in reversed(post):
+        try:
+            action()
+        except Exception as exc:  # noqa: BLE001 - a post action must not mask the job's result
+            _emit(config, "post", META, f"post action failed: {exc!r}")
+
     return results
+
+
+def _run_uses(
+    config: StepLoopConfig,
+    step: Step,
+    name: str,
+    post: list[Callable[[], None]],
+) -> list[Step] | StepResult:
+    """A `uses:` step: inline it, run a built-in, or skip it with a reason.
+
+    A list means "run these in my place"; a StepResult means this step is
+    finished. Resolution happens exactly once — returning the steps rather
+    than a "go inline it" signal is what stops the caller from resolving a
+    second time and emitting every E313/W319 twice.
+    """
+    from yeet.executor import uses as uses_mod
+
+    bag = DiagnosticBag()
+    plan = uses_mod.plan_uses(step, config.root, bag)
+
+    for diagnostic in bag.items:
+        _emit(config, name, META, f"{diagnostic.code}: {diagnostic.message}")
+
+    if plan.kind == uses_mod.INLINE:
+        if bag.has_errors():
+            _emit(config, name, META, f"`{step.uses}` could not be prepared")
+            _conclude(config, step, Status.FAILURE)
+            return StepResult(step_name=name, status=Status.FAILURE, exit_code=1)
+        # GitHub propagates `continue-on-error` into a composite's steps but
+        # not `if:` — the caller's condition was already evaluated above.
+        for inner in plan.steps:
+            inner.continue_on_error = inner.continue_on_error or step.continue_on_error
+        return plan.steps
+
+    if plan.kind == uses_mod.BUILTIN:
+        return _run_builtin(config, step, name, plan, post)
+
+    _emit(config, name, META, f"skipped (not the vibe): {plan.reason}")
+    _conclude(config, step, Status.SKIPPED)
+    return StepResult(step_name=name, status=Status.SKIPPED)
+
+
+def _run_builtin(
+    config: StepLoopConfig,
+    step: Step,
+    name: str,
+    plan: Any,
+    post: list[Callable[[], None]],
+) -> StepResult:
+    """Invoke the built-in through the runner the CLI handed us.
+
+    Not imported: `storage` is the executor's SIBLING and the tier contract
+    forbids the edge (docs/adr/0007). `cmd_run` passes
+    `storage.builtin.run_builtin` down, exactly as it passes a `LogSink` and a
+    `Masker`. When no runner was supplied — every unit test that does not care
+    about artifacts — the step is skipped and says so.
+    """
+    if config.builtins is None:
+        _emit(config, name, META, f"skipped (not the vibe): no runner for `{plan.builtin}`")
+        _conclude(config, step, Status.SKIPPED)
+        return StepResult(step_name=name, status=Status.SKIPPED)
+
+    started = time.monotonic()
+    _emit(config, name, META, f"::group::{name}")
+    ctx = BuiltinContext(
+        root=config.root,
+        run_id=config.layout.run_id,
+        # The project root IS the workspace: it is what the backend
+        # bind-mounts at /workspace, so a file the container just wrote is
+        # visible here at the same relative path.
+        workspace=config.root,
+        inputs=dict(step.with_),
+        emit=lambda line: _emit(config, name, STDOUT, line),
+        post=post,
+    )
+    try:
+        outcome = config.builtins(plan.builtin, ctx)
+    except Exception as exc:  # noqa: BLE001 - report, never hide (see interpolate)
+        _emit(config, name, META, f"`{plan.builtin}` failed: {exc!r}")
+        outcome = BuiltinResult(ok=False, message=repr(exc))
+    _emit(config, name, META, "::endgroup::")
+
+    if step.id:
+        config.step_outputs.setdefault(step.id, {}).update(outcome.outputs)
+
+    status = Status.SUCCESS if outcome.ok else Status.FAILURE
+    if not outcome.ok and outcome.message:
+        _emit(config, name, META, outcome.message)
+    _conclude(config, step, status)
+    return StepResult(
+        step_name=name,
+        status=status,
+        exit_code=0 if outcome.ok else 1,
+        duration_s=time.monotonic() - started,
+    )
 
 
 def _conclude(config: StepLoopConfig, step: Step, status: Status) -> None:

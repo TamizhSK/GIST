@@ -135,6 +135,7 @@ class LocalBackend:
             to_step_path=str,
             sink=ctx.sink,
             contexts=ctx.contexts,
+            builtins=ctx.builtins,
             in_container=False,
         )
 

@@ -40,6 +40,7 @@ from yeet.executor.workspace import RunLayout, create
 from yeet.expressions.contexts import Contexts, build_github_context
 from yeet.planner.plan import ExecutionPlan, build_plan
 from yeet.reporting.console import RunConsole
+from yeet.storage.builtin import run_builtin
 from yeet.storage.runs import RunStore
 from yeet.validation.pipeline import validate_file
 
@@ -107,6 +108,10 @@ def run(
         max_workers=jobs or os.cpu_count(),
         workflow_env=dict(workflow.env),
         masker=masker,
+        # The one place that knows both halves: `storage` implements the
+        # built-in actions, the executor runs them, and the tier contract keeps
+        # those two from importing each other. See `core/builtins.py`.
+        builtins=run_builtin,
         sink=_sink(layout, color=color_enabled(ctx)),
         contexts=contexts,
         layout=layout,
