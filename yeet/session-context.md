@@ -651,3 +651,34 @@ ruff format: pass
 mypy strict: 101 files clean
 lint-imports: 2 kept, 0 broken
 pytest: 682 unit tests passed
+    
+
+
+
+  # session 2.2 : DEV D
+   ASCII-only rework, no other behavior change. Went through theme.py,
+  console.py, and the new live.py and replaced every Unicode glyph the
+  renderer prints with an ASCII equivalent — oh-my-zsh's ASCII-safe-theme
+  spirit rather than its Powerline/Unicode themes:
+
+  - theme.py: SYMBOL_PASS/FAIL/SKIP are now [OK]/[FAIL]/[SKIP],
+  SYMBOL_RUNNING is >, and new BRANCH/LAST_BRANCH/PIPE/BLANK constants (+--
+  , \-- , |   ,     ) give both renderers the same ASCII tree vocabulary
+  tree --charset ascii uses. format_summary's em dash became a plain -.
+  - console.py: step/job headers and footers, and the ::group:: marker (▼ →
+  >>), now compose from those ASCII pieces; fixed a real ordering bug in the
+  process — the footer was printing the status icon before the branch ([OK]
+    +-- name) instead of matching the header's branch-then-icon order (+--
+  [OK] name).
+  - live.py: dropped rich.tree.Tree and rich.spinner.Spinner entirely (both
+  are Unicode-only — Tree's guide characters are hardcoded box-drawing,
+  Spinner("dots") is Braille) in favor of a hand-rolled ASCII tree (branch
+  prefixes baked into each line) and a small _SpinnerLine renderable using
+  the classic -\|/ frames. This also closes a real crash risk on a legacy
+  Windows console codepage (cp1252/cp437), which can't encode Braille or
+  box-drawing characters at all.
+
+  Verified with a live smoke test (forced-TTY LiveRunConsole) and a real
+  piped run — both render cleanly, exit codes and JSONL logging are
+  untouched, and the full test/lint/type-check suite still passes (683
+  tests, ruff, mypy, import-linter all green).
