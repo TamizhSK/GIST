@@ -449,3 +449,63 @@ probes on POSIX and kills on Windows; `bash` is a shell on POSIX and a WSL
 launcher on Windows; `text=True` decodes UTF-8 on POSIX and cp1252 on Windows;
 `write_text` writes LF on POSIX and CRLF on Windows. Four instances of one
 shape, and CI found all four in a single afternoon after never having run.
+
+
+
+
+---
+***
+---
+
+# session-1.1
+
+Answering your question directly
+
+  Yes — macOS and Linux run fine, and now Windows does too. All eight CI jobs pass:
+
+  ✓ check (ubuntu-latest, 3.11)    ✓ check (ubuntu-latest, 3.12)
+  ✓ check (macos-latest, 3.11)     ✓ check (macos-latest, 3.12)
+  ✓ check (windows-latest, 3.11)   ✓ check (windows-latest, 3.12)
+  ✓ docker                         ✓ rules-doc
+
+  That's the first fully green CI run in the project's life. The macOS and Linux legs were never in danger —
+  shell_executable is a no-op off Windows by construction, and container steps skip it entirely — but I verified
+  rather than assumed: 695 tests + 18 container tests locally on macOS, a live matrix run, and both ubuntu legs
+  green on every push.
+
+  What it took — four rounds, each uncovering the next layer
+
+  Your instinct to ask was right, because the Windows work kept finding real product bugs, not test noise:
+
+  1. script_suffix ignored the platform default. shell_argv resolved to pwsh on Windows; script_suffix always fell
+  through to .sh. So every step was written to script.sh and handed to pwsh -File, which takes .ps1 only — the
+  function's own docstring said so. Every job on Windows flopped.
+  2. bash on Windows is not bash. Bare bash resolves to C:\Windows\System32\bash.exe — the WSL launcher. With no
+  distro installed it fails with a message about Linux distributions. platform_.shell_executable() now finds Git for
+  Windows.
+  3. Probing a pid killed it. With the shells fixed, all 660 Windows tests passed and the step still exited 1 — a
+  KeyboardInterrupt during test_watcher.py. ProjectLock used os.kill(pid, 0); on Windows CPython special-cases only
+  CTRL_C/CTRL_BREAK and otherwise calls TerminateProcess, so signal 0 kills. The lock test writes os.getppid(), so
+  probing it terminated the CI shell. This was never just a test bug — a stale watch.lock with a recycled pid would
+  have killed an unrelated program on a user's machine.
+  4. mypy couldn't be green on all three at once. ctypes.windll needs # type: ignore[attr-defined] off Windows, and
+  warn_unused_ignores rejects that same ignore on Windows. getattr(ctypes, "windll") needs none.
+
+  Every one of those is the same shape: a function that behaves differently on Windows, called as if it didn't. Same
+  for the two harness bugs (text=True decoding cp1252, write_text emitting CRLF). CI found all six in one afternoon
+  after never having run once.
+
+  DEV-C status: complete
+
+  Contexts (matrix/env/needs/steps/runner/job), github_env wired after five sessions, Workflow.env no longer
+  dropped, run-id alignment, GitHub's result vocabulary in expressions, and the Windows cross-platform layer — which
+  is explicitly C's ownership per plan.md.
+
+  PR #1 is open, green, and mergeable: https://github.com/TamizhSK/GIST/pull/1
+
+  One thing to flag honestly: fix #3 is in triggers/watcher.py, which is DEV-D's file. I changed one line there to
+  delegate to platform_.pid_alive(), because platform_.py's own docstring claims every sys.platform branch. Worth a
+  word with D rather than a silent handover.
+
+  Remaining C items: C15/C16 (docker_action.py and js_action.py are still empty files), and the executor half of
+  loot:/stash:, which is blocked on DEV-A adding the IR fields and schema keys first.
