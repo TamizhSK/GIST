@@ -509,3 +509,35 @@ Answering your question directly
 
   Remaining C items: C15/C16 (docker_action.py and js_action.py are still empty files), and the executor half of
   loot:/stash:, which is blocked on DEV-A adding the IR fields and schema keys first.
+
+
+# session-2.1
+**Task for Dev A — flow discovery: support flexible filenames in `workflows/` folder**
+
+**Background:** `yeet` currently only auto-discovers `.yeet/flows/*.yml`, `.github/workflows/*.yml`, or a root `yeet.yml`. A user wants to keep their workflow file at the project root inside a `workflows/` directory with any filename (e.g. `workflows/flows.yml`), and have `yeet` pick it up automatically.
+
+**Files to change:**
+
+1. **`src/yeet/analyzer/discover.py`**
+   - Add a new precedence tier: `_ORDER_WORKFLOWS = 2`
+   - Shift existing root fallback to `_ORDER_ROOT = 3`
+   - In `_classify()`, add a new branch that matches files in a top-level `workflows/` folder with any `.yml`/`.yaml`/`.json` suffix:
+     ```python
+     if (
+         len(parts) == 2
+         and parts[0] == "workflows"
+         and rel.suffix in YEET_FLOW_SUFFIXES
+     ):
+         ranked.append((_ORDER_WORKFLOWS, path))
+         return
+     ```
+   - Final precedence order: `.yeet/flows/` (0) → `.github/workflows/` (1) → `workflows/` (2) → root `yeet.yml` (3)
+
+2. **`src/yeet/cli/cmd_check.py`** (lines 35–39)
+   - Add `list((target / "workflows").glob("*.yml"))` to `flow_candidates`, placed between the `.github/workflows` glob and the `yeet.yml` existence check.
+
+3. **`src/yeet/cli/cmd_graph.py`** (lines 89–93)
+   - Same addition in `_flows()`: check `workflows/` before falling back to `yeet.yml`.
+
+**Done when:** `yeet scan`, `yeet check`, and `yeet graph` all discover `workflows/flows.yml` (or any `.yml` name) at the project root.
+Dev-A should make sure the yml file could be in any standard in our standars or github predefined standards

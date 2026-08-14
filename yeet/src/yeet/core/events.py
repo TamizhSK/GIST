@@ -25,21 +25,86 @@ META = "meta"
 image pulls. Keeping it in the same stream lets `yeet logs` replay a run in
 true chronological order instead of interleaving two files by guesswork."""
 
+LOG = "log"
+JOB_START = "job_start"
+JOB_END = "job_end"
+STEP_START = "step_start"
+STEP_END = "step_end"
+"""`kind` vocabulary. `LOG` is a line of text (the only kind that existed
+before the live renderer): a `::group::` marker, a stdout/stderr line, a META
+note. The other four are lifecycle events with no text of their own — they
+carry `status`/`duration_s`/`exit_code` instead, so a renderer can draw a
+spinner on `*_START` and freeze it into a ✓/✗ with a time on `*_END` without
+having to infer job/step boundaries from the first line of output, the way
+`reporting.console.RunConsole` used to."""
+
 
 @dataclass(frozen=True, slots=True)
 class LogEvent:
-    """One line of output. Serialized to JSONL verbatim — field names are the
-    on-disk log format, so renaming one breaks `yeet logs` on old runs."""
+    """One line of output, or one lifecycle transition. Serialized to JSONL
+    verbatim — field names are the on-disk log format, so renaming one breaks
+    `yeet logs` on old runs. New fields are additive and default such that a
+    pre-lifecycle-events log file still replays: `kind` defaults to `LOG` and
+    the rest to `None`."""
 
     ts: float
     job: str
     step: str
     stream: str
     text: str
+    kind: str = LOG
+    status: str | None = None
+    """A `core.result.Status` value (e.g. `"slayed"`), set on `*_END` events."""
+    duration_s: float | None = None
+    exit_code: int | None = None
+    """Only ever set on `STEP_END` — a job has no exit code of its own."""
 
     @classmethod
     def now(cls, job: str, step: str, stream: str, text: str) -> LogEvent:
         return cls(ts=time.time(), job=job, step=step, stream=stream, text=text)
+
+    @classmethod
+    def job_started(cls, job: str) -> LogEvent:
+        return cls(ts=time.time(), job=job, step="", stream=META, text="", kind=JOB_START)
+
+    @classmethod
+    def job_ended(cls, job: str, *, status: str, duration_s: float) -> LogEvent:
+        return cls(
+            ts=time.time(),
+            job=job,
+            step="",
+            stream=META,
+            text="",
+            kind=JOB_END,
+            status=status,
+            duration_s=duration_s,
+        )
+
+    @classmethod
+    def step_started(cls, job: str, step: str) -> LogEvent:
+        return cls(ts=time.time(), job=job, step=step, stream=META, text="", kind=STEP_START)
+
+    @classmethod
+    def step_ended(
+        cls,
+        job: str,
+        step: str,
+        *,
+        status: str,
+        duration_s: float,
+        exit_code: int | None = None,
+    ) -> LogEvent:
+        return cls(
+            ts=time.time(),
+            job=job,
+            step=step,
+            stream=META,
+            text="",
+            kind=STEP_END,
+            status=status,
+            duration_s=duration_s,
+            exit_code=exit_code,
+        )
 
 
 @runtime_checkable

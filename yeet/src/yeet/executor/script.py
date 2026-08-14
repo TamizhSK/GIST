@@ -7,6 +7,7 @@ See docs/architecture.md
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from yeet.executor import platform_
@@ -14,6 +15,7 @@ from yeet.executor import platform_
 DEFAULT_CONTAINER_SHELL = "bash"
 DEFAULT_POSIX_SHELL = "bash"
 DEFAULT_WINDOWS_SHELL = "pwsh"
+WINDOWS_FALLBACK_SHELL = "powershell"
 
 _ARGV: dict[str, list[str]] = {
     # `-e` so a failing command fails the step. GitHub adds `-o pipefail` for
@@ -60,13 +62,19 @@ def resolve_shell(shell: str | None, *, in_container: bool) -> str:
 
     Two functions deriving the same default independently is the shape of the
     bug; deleting the second derivation is the fix.
+
+    On the host, Windows defaults to pwsh when installed and the PowerShell the
+    OS ships otherwise (plan.md C13) — a stock Windows box without PowerShell
+    Core must still be able to run `cooked_on: local` jobs.
     """
     name = (shell or "").strip().lower()
     if name:
         return name
     if in_container:
         return DEFAULT_CONTAINER_SHELL
-    return DEFAULT_WINDOWS_SHELL if platform_.is_windows() else DEFAULT_POSIX_SHELL
+    if not platform_.is_windows():
+        return DEFAULT_POSIX_SHELL
+    return DEFAULT_WINDOWS_SHELL if shutil.which("pwsh") else WINDOWS_FALLBACK_SHELL
 
 
 def shell_argv(shell: str | None, script_path: str, *, in_container: bool) -> list[str]:

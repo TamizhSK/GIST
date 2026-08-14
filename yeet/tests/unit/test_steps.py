@@ -15,6 +15,7 @@ from yeet.core.events import STDERR, STDOUT, ListSink
 from yeet.core.masking import Masker
 from yeet.core.result import Status
 from yeet.executor import state_files
+from yeet.executor.script import script_suffix
 from yeet.executor.steps import Chunk, StepLoopConfig, StepRequest, run_steps
 from yeet.executor.workspace import create
 
@@ -292,7 +293,15 @@ def test_the_script_on_disk_has_no_carriage_returns(tmp_path):
     executor = FakeExec()
     run_steps(config, executor)
 
-    written = (tmp_path / ".yeet" / "tmp" / "run-1" / "build" / "step-1" / "script.sh").read_bytes()
+    written = (
+        tmp_path
+        / ".yeet"
+        / "tmp"
+        / "run-1"
+        / "build"
+        / "step-1"
+        / f"script{script_suffix('bash', in_container=False)}"
+    ).read_bytes()
     assert b"\r" not in written
 
 
@@ -322,6 +331,9 @@ def test_on_windows_the_script_is_written_where_pwsh_can_run_it(tmp_path, monkey
     from yeet.executor import script as script_mod
 
     monkeypatch.setattr(script_mod.platform_, "is_windows", lambda: True)
+    monkeypatch.setattr(
+        script_mod.shutil, "which", lambda name: "C:/pwsh.exe" if name == "pwsh" else None
+    )
 
     job = make_job(steps=[make_step("echo hi")])
     config = build_config(tmp_path, job)

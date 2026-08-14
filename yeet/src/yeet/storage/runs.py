@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from dataclasses import asdict
 from pathlib import Path
 
-from yeet.core.events import LogEvent, LogSink
+from yeet.core.events import LOG, LogEvent, LogSink
 
 
 class RunStore(LogSink):
@@ -23,13 +24,11 @@ class RunStore(LogSink):
         self.log_file = self.run_dir / "log.jsonl"
 
     def emit(self, event: LogEvent) -> None:
-        record = {
-            "ts": event.ts,
-            "job": event.job,
-            "step": event.step,
-            "stream": event.stream,
-            "text": event.text,
-        }
+        # `asdict`, not a hand-picked set of keys: `kind`/`status`/`duration_s`/
+        # `exit_code` were added for the live renderer's job/step lifecycle
+        # events, and every field on LogEvent belongs on disk so `yeet logs`
+        # can replay them later without a second schema to keep in sync.
+        record = asdict(event)
         try:
             with self.log_file.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(record) + "\n")
@@ -72,6 +71,14 @@ def replay(root: Path, run_id: str | None = None) -> Iterator[LogEvent]:
                     step=str(data.get("step", "")),
                     stream=str(data.get("stream", "stdout")),
                     text=str(data.get("text", "")),
+                    # `.get(..., LOG)` / `.get(...)`, not `data["kind"]`: a log
+                    # file written before these fields existed has none of
+                    # them, and it should still replay as plain text lines
+                    # rather than fail `yeet logs`.
+                    kind=str(data.get("kind", LOG)),
+                    status=data.get("status"),
+                    duration_s=data.get("duration_s"),
+                    exit_code=data.get("exit_code"),
                 )
             except Exception:
                 continue
