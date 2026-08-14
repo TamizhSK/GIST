@@ -653,3 +653,98 @@ the jobs should also run clean without any errors.
 also we should have a feature where if there are any secrets and variables for that job, we import them here to local machine, store it inside .env and when our project is used with the yeet commands to run the job, the keys should be fetched respectively and work without any errors.
 
 make the TUI better at installation as well as at runtime of the jobs
+
+# session-8 — clone, install, run
+
+## The clone did not work, and the first thing anyone tries failed
+
+`pip install .` from a fresh clone: *"neither setup.py nor pyproject.toml
+found"*. `pip install git+<url>`, the way most people install a tool from a
+repo: the same. The Python project lived one directory down in `yeet/`, so the
+only form that worked was the undocumented `#subdirectory=yeet`.
+
+Moved to the repo root with `git mv`. CI drops `working-directory: yeet`; the
+two near-duplicate READMEs collapse into one.
+
+## Python 3.11 excluded the most common WSL environment
+
+Ubuntu 22.04 LTS ships Python **3.10** and is the default WSL image, so the
+floor is now 3.10. `tomllib` is 3.11 stdlib — `tomli` on 3.10, behind a
+`sys.version_info` branch rather than try/except, because mypy type-checks the
+arm matching its `python_version` and the try/except spelling is green on
+neither. Same shape as the `ctypes.windll` bind in `platform_.py`; that is
+twice now, and the lesson generalises: **when a construct differs by
+interpreter version, the version check has to be one mypy can see.**
+
+`tarfile.extractall(filter=)` needs 3.10.12+; an older patch release now raises
+a clear error rather than silently extracting without the guard.
+
+## Defects found by running on 3.10, not by reading
+
+1. **`with:` was never interpolated for built-in actions.** A two-leg matrix
+   uploaded both artifacts under the single literal name
+   `out-${{ matrix.leg }}` and shared one cache key — the second leg overwrote
+   the first, and the log said so in a string a user can read and still not
+   notice. The `run:` path gets expansion for free from `_layered_env`; the
+   built-in path never becomes an environment, so it did not.
+
+2. **`Live` cropped the bottom of the tree.** Constructed without
+   `vertical_overflow`, and rich's default is `"ellipsis"`, which crops the END
+   of a renderable taller than the terminal. The tree grows downward and the
+   running step is its last row, so on any run longer than a screenful you
+   watched a static list of finished steps and an ellipsis — the live view
+   hiding precisely the thing it exists to show.
+
+3. **`Contexts.vars` was never populated** — the same disease `secrets` had in
+   session 5, and the seventh instance of the class. `${{ vars.X }}` was the
+   empty string in every workflow that has ever used one.
+
+## Secrets and variables
+
+`yeet secrets import` reads the project's workflows, finds every
+`${{ secrets.X }}` and `${{ vars.Y }}` they reference, writes those names to
+`.env`, and fills in whatever the shell already exports. Existing entries are
+never overwritten, so it is safe to re-run when someone adds a workflow.
+
+The split is load-bearing and worth restating: locally there is ONE pool of
+values and nothing in it says which entries are secret. Only the workflow
+knows, because only the workflow spells `secrets.` or `vars.`. Mask a variable
+and `vars.NODE_ENV=production` redacts every "production" in the build output;
+fail to mask a secret and it is in `.yeet/runs/` forever. Both failure modes
+now have an e2e tripwire, and both were verified by breaking them.
+
+`.env` is in this repo's `.gitignore` and in the block `yeet init` writes — it
+holds plaintext tokens, and until this session nothing ignored it.
+
+## Still open
+
+- **C15/C16.** Docker and node actions are skipped with a message naming the
+  kind and the reason. `actions/checkout@v4` is a node action, so it is a
+  no-op — harmless locally, since the workspace already IS the repo, but a
+  workflow whose first step is `checkout` runs the rest against the working
+  tree rather than a clean copy.
+- **Built-ins run on the host**, not inside the job's container. Deliberate:
+  the workspace is a bind mount, so the host sees what the container wrote. It
+  would matter for a path that only exists inside the image.
+- **W317** is registered and unimplemented — the last one in the Layer 3 block.
+- **The installer assumes git.** A tarball or wheel release would drop that
+  dependency and make "download a file" a genuine second option rather than a
+  variant of the first.
+- **`docs/` overlap** — `handbook.md`, `understanding-yeet.md` and
+  `getting-started.md` still repeat a preamble. Three readers, three documents;
+  collapsing them is an editorial call nobody has made.
+- **Windows** is verified by CI, not locally, and the 3.10 leg is new there.
+- **Runtime TUI.** The output-suppression and `vertical_overflow` bugs above
+  are fixed, but the live tree is otherwise untouched — it is another
+  developer's thread, including the duplicate job header on matrix legs.
+
+## Verification
+
+    make check        797 passed, six gates green
+    pytest -m docker  18 passed against a live daemon
+    make rules-check  docs/rules.md matches codes.py
+    python3.10        full suite green on a real 3.10 interpreter
+
+End to end from an empty `$HOME`: `install.sh` → `yeet secrets import` →
+`yeet run`, with the secret's value reaching the step, the variable resolving
+legibly, and neither the log nor `.yeet/runs/` containing the token.
