@@ -27,6 +27,7 @@ from yeet.core.events import (
 )
 from yeet.reporting.theme import (
     BRANCH,
+    PIPE,
     STATUS_COOKED,
     SYMBOL_FAIL,
     SYMBOL_PASS,
@@ -64,9 +65,14 @@ class RunConsole:
         self.out = out if out is not None else sys.stdout
         self.color = color
         self.verbose = verbose
-        self._group_depth = 0
-        self._seen_jobs: set[str] = set()
+        # Per JOB, not one shared counter. Jobs in a wave emit from parallel
+        # threads, so a single `_group_depth` meant one job's `::group::`
+        # silently indented another job's output — and `::endgroup::` from
+        # either closed it.
+        self._group_depth: dict[str, int] = {}
+        self._seen_jobs: list[str] = []
         self._job_steps: dict[str, str] = {}
+        self._label_width = 0
 
     def start(self) -> None:
         """No-op: a plain console has nothing to open. Exists so `cmd_run` can
@@ -80,10 +86,10 @@ class RunConsole:
         self._headers(event)
 
         if event.kind == JOB_END:
-            self._footer("", event.job, event.status, event.duration_s)
+            self._footer(event.job, "", event.job, event.status, event.duration_s)
             return
         if event.kind == STEP_END:
-            self._footer(f"  {BRANCH}", event.step, event.status, event.duration_s)
+            self._footer(event.job, f"  {BRANCH}", event.step, event.status, event.duration_s)
             return
         if event.kind in (JOB_START, STEP_START):
             # The header was already printed above, on first sight of this
@@ -91,54 +97,74 @@ class RunConsole:
             return
 
         text = event.text.rstrip("\r\n")
+        depth = self._group_depth.get(event.job, 0)
 
         if text.startswith("::group::"):
             if not self.verbose:
                 return
             group_name = text[len("::group::") :].strip()
             if group_name != event.step:
-                indent = "  " * (self._group_depth + 2)
-                group_header = colorize(
-                    f">> {group_name}", Colors.BOLD + Colors.CYAN, color=self.color
-                )
-                self._print(f"{indent}{group_header}")
-            self._group_depth += 1
+                header = colorize(f">> {group_name}", Colors.BOLD + Colors.CYAN, color=self.color)
+                self._print(event.job, "  " * (depth + 2) + header)
+            self._group_depth[event.job] = depth + 1
             return
         elif text == "::endgroup::":
-            if self._group_depth > 0:
-                self._group_depth -= 1
+            self._group_depth[event.job] = max(0, depth - 1)
             return
 
-        indent = "  " * (self._group_depth + 2)
+        indent = "  " * (depth + 2)
 
         if event.stream == STDERR:
-            formatted_text = colorize(text, Colors.RED, color=self.color)
-            self._print(f"{indent}{formatted_text}")
+            self._print(event.job, indent + colorize(text, Colors.RED, color=self.color))
         elif event.stream == META:
-            formatted_text = colorize(text, Colors.DIM + Colors.ITALIC, color=self.color)
-            self._print(f"{indent}{formatted_text}")
+            style = Colors.DIM + Colors.ITALIC
+            self._print(event.job, indent + colorize(text, style, color=self.color))
         else:
-            self._print(f"{indent}{text}")
+            self._print(event.job, indent + text)
+
+    # -- attribution -----------------------------------------------------------
+
+    def _prefix(self, job: str) -> str:
+        """`job │ ` once a run has more than one job, and nothing before that.
+
+        Parallel legs share one stream, and until this existed there was no way
+        to tell which of them a line came from: a three-leg matrix printed
+        three identical `+-- setup` headers and then `using node 16`, `using
+        node 18` and `using node 20` in whatever order the threads got to the
+        sink. Every line was true and the block as a whole said nothing.
+
+        Nothing is prefixed while only one job has been seen, which keeps the
+        common single-job run exactly as clean as it was — and it is safe,
+        because a line emitted before a second job appeared could only have
+        come from the first.
+        """
+        if len(self._seen_jobs) < 2:
+            return ""
+        bar = PIPE.strip() or "|"
+        return colorize(f"{job:<{self._label_width}} {bar} ", Colors.DIM, color=self.color)
 
     def _headers(self, event: LogEvent) -> None:
         """Print each job and step header once, even when parallel legs interleave."""
         if event.job not in self._seen_jobs:
-            self._seen_jobs.add(event.job)
-            self._group_depth = 0
+            self._seen_jobs.append(event.job)
+            self._label_width = max(self._label_width, len(event.job))
+            self._group_depth[event.job] = 0
             job_hdr = colorize(
                 f"{SYMBOL_RUNNING} {event.job}", Colors.BOLD + Colors.BLUE, color=self.color
             )
             tag = colorize(f"[{STATUS_COOKED}]", Colors.DIM, color=self.color)
-            self._print(f"\n{job_hdr} {tag}")
+            self._print("", f"\n{job_hdr} {tag}")
 
         if event.step and self._job_steps.get(event.job) != event.step:
             self._job_steps[event.job] = event.step
             step_hdr = colorize(
                 f"  {BRANCH}{SYMBOL_RUNNING} {event.step}", Colors.CYAN, color=self.color
             )
-            self._print(step_hdr)
+            self._print(event.job, step_hdr)
 
-    def _footer(self, prefix: str, name: str, status: str | None, duration_s: float | None) -> None:
+    def _footer(
+        self, job: str, prefix: str, name: str, status: str | None, duration_s: float | None
+    ) -> None:
         """The `[OK] name (0.2s)` line printed once a job or step lifecycle event
         reports its status — the plain-console answer to the live renderer's
         spinner-to-checkmark transition, just as its own line instead of an
@@ -148,9 +174,17 @@ class RunConsole:
         of the branch."""
         icon, style = _glyph(status)
         dur = f" ({duration_s:.1f}s)" if duration_s is not None else ""
-        self._print(colorize(f"{prefix}{icon} {name}{dur}", style, color=self.color))
+        self._print(job, colorize(f"{prefix}{icon} {name}{dur}", style, color=self.color))
 
-    def _print(self, msg: str) -> None:
+    def _print(self, job: str, msg: str) -> None:
+        """`job` is "" for a line that owns the full width (a job header).
+
+        A blank leading line keeps its blank: prefixing it would print a bare
+        gutter with nothing after it, once per job, which reads as damage.
+        """
+        prefix = self._prefix(job) if job else ""
+        lead = "\n" if prefix and msg.startswith("\n") else ""
+        msg = lead + prefix + (msg[1:] if lead else msg)
         try:
             self.out.write(msg + "\n")
             self.out.flush()
@@ -168,6 +202,7 @@ class RunConsole:
     ) -> None:
         """Render the final run summary block."""
         self._print(
+            "",
             format_summary(
                 workflow_name,
                 status,
@@ -175,7 +210,7 @@ class RunConsole:
                 run_id=run_id,
                 job_count=job_count,
                 color=self.color,
-            )
+            ),
         )
 
 

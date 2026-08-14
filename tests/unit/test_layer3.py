@@ -394,3 +394,51 @@ def test_secrets_in_step_env_and_with_are_seen() -> None:
         "`secrets.A` is not set",
         "`secrets.B` is not set",
     ]
+
+
+# --- W317 -------------------------------------------------------------------
+
+
+def test_set_output_is_w317() -> None:
+    """GitHub disabled it in 2023. It still parses and now does nothing, so a
+    job reading `steps.rev.outputs.sha` gets an empty string and fails
+    somewhere else entirely — which is why saying so at check time is most of
+    this rule's value."""
+    wf = make_workflow(
+        {"build": make_job("build", steps=[make_step('echo "::set-output name=sha::abc"')])}
+    )
+    bag = check(wf)
+
+    assert codes(bag) == ["YEET-W317"]
+    assert "GITHUB_OUTPUT" in (bag.items[0].help or "")
+
+
+def test_every_removed_command_is_recognised() -> None:
+    for command in ("set-output", "save-state", "set-env", "add-path"):
+        wf = make_workflow(
+            {"build": make_job("build", steps=[make_step(f'echo "::{command} name=x::y"')])}
+        )
+        assert codes(check(wf)) == ["YEET-W317"], command
+
+
+def test_a_current_command_is_not_flagged() -> None:
+    """`::group::`, `::add-mask::`, `::error::` are all still supported — a
+    rule that fired on them would make `yeet check` noise on every real file."""
+    wf = make_workflow(
+        {
+            "build": make_job(
+                "build",
+                steps=[make_step('echo "::group::deps"\necho "::add-mask::x"\necho "::error::y"')],
+            )
+        }
+    )
+    assert codes(check(wf)) == []
+
+
+def test_the_word_set_output_in_prose_is_not_a_command() -> None:
+    """It needs the `::` sigil. Matching the bare word would fire on a comment
+    explaining the migration."""
+    wf = make_workflow(
+        {"build": make_job("build", steps=[make_step("# we migrated off set-output in 2023")])}
+    )
+    assert codes(check(wf)) == []

@@ -649,6 +649,22 @@ jobs:
 - **Meaning:** deprecated workflow syntax.
 - **Disabling:** Not configurable: layers 0-3 are correctness checks, and a workflow that fails one of them cannot be run faithfully.
 
+A workflow that triggers it — `tests/invalid/W317.yml`:
+
+```yaml
+# W317 — GitHub disabled `::set-output::` in 2023. It still parses, and it now
+# does nothing, so a job reading `steps.rev.outputs.sha` gets an empty string
+# and fails somewhere else entirely.
+name: deprecated command
+on: [push]
+jobs:
+  build:
+    runs-on: local
+    steps:
+      - id: rev
+        run: echo "::set-output name=sha::abc123"
+```
+
 ---
 
 ### `YEET-W318` — unused output variable

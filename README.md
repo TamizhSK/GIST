@@ -1,17 +1,24 @@
-# yeet
+<img src="assets/yeet.svg" alt="yeet — run GitHub Actions workflows locally" width="445">
 
-A local, GitHub Actions-compatible workflow runner — with a dialect of its own.
+# yeet — run GitHub Actions workflows locally
 
-Point it at any project (cloned from GitHub or created locally). It finds the
-workflow files, tells you whether they're written correctly, and runs them in
-Docker on your machine.
+**yeet** is a local, GitHub Actions-compatible workflow runner. Point it at any
+project — cloned from GitHub or created locally — and it finds your workflow
+files, tells you if they're written correctly, and runs them in Docker on your
+machine. No cloud, no account, no CI minutes.
+
+It even speaks a **dialect of its own** — `vibe`, `the_grind`, `moves`, `drip`,
+`tea` — while running canonical GitHub Actions files unchanged. Both spellings,
+side by side, in one repo.
 
 ```bash
-yeet scan .            # what is this project, and what flows does it have?
-yeet check .           # is the .yml written correctly?  (5 validation layers)
-yeet secrets import    # collect the secrets/vars its workflows need into .env
-yeet run               # run it
+yeet scan bestie          # what is this project, and what flows does it have?
+yeet check bestie         # is the .yml written correctly?  (5 validation layers)
+yeet run bestie           # run the whole thing on your machine
+yeet logs                 # replay the last run
 ```
+
+That's the whole product in five commands.
 
 ## Install
 
@@ -30,24 +37,22 @@ curl -fsSLO https://raw.githubusercontent.com/TamizhSK/GIST/main/install.sh
 less install.sh && sh install.sh
 ```
 
-With [pipx](https://pipx.pypa.io) already on the machine, or straight from pip:
+Or install straight with [pipx](https://pipx.pypa.io):
 
 ```bash
 pipx install git+https://github.com/TamizhSK/GIST
-pip install git+https://github.com/TamizhSK/GIST     # into the venv you're in
 ```
 
-Needs **Python 3.10+** (Ubuntu 22.04 LTS and its WSL image ship 3.10). Docker is optional — jobs with `cooked_on: local`
-(`runs-on: local`) run in your own shell, so you can validate and run workflows
-before you install a daemon. To remove it: `yeet-uninstall`, or
-`rm -rf ~/.local/share/yeet ~/.local/bin/yeet`.
+Needs **Python 3.10+** (Ubuntu 22.04 LTS and its WSL image ship 3.10). Docker
+is optional — workflows with `cooked_on: local` run in your own shell, so you
+can go end-to-end before you ever install a daemon. To remove it:
+`yeet-uninstall`.
 
-## Secrets and variables
+## Secrets and variables, imported locally
 
-A workflow you just cloned reads `${{ secrets.NPM_TOKEN }}` and
-`${{ vars.AWS_REGION }}`, and nothing except the workflow files says so.
-`yeet secrets import` reads them out, writes every name it finds to `.env`,
-and fills in the ones your shell already exports:
+`yeet secrets import` reads the workflow files, finds every `${{ secrets.X }}`
+and `${{ vars.Y }}` they reference, writes those names to `.env`, and fills in
+the ones your shell already exports:
 
 ```console
 $ yeet secrets import
@@ -55,65 +60,57 @@ $ yeet secrets import
   = NPM_TOKEN   (secret)  ← from your environment
 ```
 
-`yeet run` then resolves both. The distinction matters at run time: values
-read as `secrets.*` are redacted from the log and from `.yeet/runs/`, values
-read as `vars.*` are not — masking `vars.NODE_ENV=production` would turn every
-"production" in your build output into `***`.
-
-Existing entries are never overwritten, so it is safe to re-run when someone
-adds a workflow. `.env` holds plaintext and is gitignored; `yeet secrets set
-<NAME>` keeps a value in the passphrase-encrypted store instead.
-
-## Start here
-
-**[`docs/handbook.md`](docs/handbook.md)** — the twenty-minute orientation:
-architecture, every command, and how we work. Read that first.
-
-Then, as needed: [`docs/architecture.md`](docs/architecture.md) for the design
-rationale (amended by [`docs/adr/0007`](docs/adr/0007-tier-rule-consequences.md)),
-[`plan.md`](plan.md) for the file-by-file ownership map,
-[`docs/getting-started.md`](docs/getting-started.md) for machine setup, and
-[`docs/rules.md`](docs/rules.md) for every diagnostic code (generated from
-`core/codes.py` by `make rules` — never hand-edited).
+Then `yeet run` resolves both. Values read as `secrets.*` are redacted from the
+log and from `.yeet/runs/`; `vars.*` are not, so masking works exactly like you
+expect. Existing entries are never overwritten — safe to re-run whenever someone
+adds a workflow.
 
 ## Status
 
 All five subsystems are implemented and wired end to end. `yeet scan → check →
 graph → run → logs` works on both the dialect and canonical GitHub Actions
-syntax; `cooked_on: local` runs without Docker at all.
+syntax, and the whole suite is green:
 
 ```
 make check     six gates green (lint · format · imports · types · noprint · test)
-pytest         787 fast tests, plus 18 behind `@pytest.mark.docker`
+pytest         787 fast tests, plus 18 against a live Docker daemon
 mypy src       102 source files, strict
 lint-imports   2 contracts kept, 0 broken
 ```
 
-Remaining gaps are listed in `docs/handbook.md` §7.
+Three OSes in CI (Linux, macOS, Windows), nine real OSS workflows in the
+compatibility corpus — all validating clean.
+
+## Start here
+
+- **[`docs/handbook.md`](docs/handbook.md)** — the twenty-minute orientation:
+  architecture, every command, how we work. Read this first.
+- [`docs/getting-started.md`](docs/getting-started.md) — machine setup and the
+  daily dev loop.
+- [`docs/architecture.md`](docs/architecture.md) — the design rationale
+  (amended by [`docs/adr/0007`](docs/adr/0007-tier-rule-consequences.md)).
+- [`docs/understanding-yeet.md`](docs/understanding-yeet.md) — what the thing
+  is, with diagrams.
+- [`docs/rules.md`](docs/rules.md) — every diagnostic code (generated from
+  `core/codes.py`; never hand-edited).
+- [`plan.md`](plan.md) — the file-by-file ownership map.
+- [`docs/history/`](docs/history/) — the session-by-session build log.
 
 ## Development
 
 ```bash
 git clone https://github.com/TamizhSK/GIST && cd GIST
-
-python -m venv .venv
-source .venv/bin/activate         # Windows PowerShell: .venv\Scripts\Activate.ps1
-
+python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pre-commit install
-git config core.autocrlf input    # skip this and \r bites you on Thursday
+git config core.autocrlf input   # skip this and \r bites you on Thursday
 
-make test      # fast loop, run constantly
-make check     # everything CI runs — before every push
-make fix       # repairs what check complains about
+make test    # fast loop, run constantly
+make check   # everything CI runs — run before every push
+make fix     # repairs what check complains about
 ```
-
-The package is at the repo root: `src/yeet/`, `tests/`, `pyproject.toml`. It
-used to live one directory down in `yeet/`, which meant `pip install
-git+<url>` — the way most people install a tool from a repo — failed with
-"neither setup.py nor pyproject.toml found". CI no longer needs a
-`working-directory`, either.
 
 ## Non-goals
 
 See `docs/architecture.md` §9. We say no on purpose.
+

@@ -110,7 +110,18 @@ spin() {
 
 banner
 
-# ── 1. a Python new enough to run us ──────────────────────────────────────────
+# ── 1. what we will build the environment with ────────────────────────────────
+# Two backends, and `uv` is preferred where it exists for a reason that matters
+# more than its speed: it can PROVISION a Python. On a box whose only
+# interpreter is the 3.9 macOS ships, or a slim container with none at all, the
+# venv path can only tell the user to go and install one; uv downloads a
+# managed interpreter and carries on. That is the difference between a tool
+# that sets itself up and one that prints instructions.
+#
+# uv builds OUR virtualenv rather than doing `uv tool install`, so the layout,
+# the shim, and `yeet-uninstall` are identical whichever backend ran — one
+# thing to remove, in one place, no matter how it got there.
+
 # Newest first: a box with 3.10 and 3.13 should use 3.13. `python` is checked
 # last because on an old machine it is still Python 2, and the version probe
 # below is what rejects it rather than a crash three steps later.
@@ -126,20 +137,36 @@ find_python() {
 }
 
 step "Checking prerequisites"
-PYTHON=$(find_python) || die "no Python 3.$MIN_MINOR or newer found.
+
+PYTHON=$(find_python || true)
+if command -v uv >/dev/null 2>&1 && [ -z "${YEET_NO_UV:-}" ]; then
+    BACKEND=uv
+    ok "uv $(uv --version 2>/dev/null | awk '{print $2}') ${MUTE}(fast path)${N}"
+    if [ -n "$PYTHON" ]; then
+        ok "python $("$PYTHON" -c 'import platform; print(platform.python_version())')"
+    else
+        info "no suitable Python on PATH — uv will fetch one"
+    fi
+elif [ -n "$PYTHON" ]; then
+    BACKEND=venv
+    ok "python $("$PYTHON" -c 'import platform; print(platform.python_version())') ${MUTE}($PYTHON)${N}"
+    # `python3-venv` is a separate package on Debian and Ubuntu, so a working
+    # python3 does NOT imply a working `-m venv`. Finding that out here, with
+    # the apt line that fixes it, beats a stack trace halfway through.
+    "$PYTHON" -c "import venv" 2>/dev/null || die "this Python cannot create virtualenvs.
+
+      Debian/Ubuntu/WSL   sudo apt install python3-venv"
+    ok "venv available"
+else
+    die "no Python 3.$MIN_MINOR or newer, and no uv to fetch one.
 
       Debian/Ubuntu/WSL   sudo apt install python3 python3-venv
       Fedora              sudo dnf install python3
-      macOS               brew install python@3.12"
-ok "python $("$PYTHON" -c 'import platform; print(platform.python_version())') ${MUTE}($PYTHON)${N}"
+      macOS               brew install python@3.12
 
-# `python3-venv` is a separate package on Debian and Ubuntu, so a working
-# python3 does NOT imply a working `-m venv`. Finding that out here, with the
-# apt line to fix it, beats a stack trace halfway through the install.
-"$PYTHON" -c "import venv" 2>/dev/null || die "this Python cannot create virtualenvs.
-
-      Debian/Ubuntu/WSL   sudo apt install python3-venv"
-ok "venv available"
+      or install uv, which brings its own Python:
+      curl -LsSf https://astral.sh/uv/install.sh | sh"
+fi
 
 command -v git >/dev/null 2>&1 || die "git is required to install from the repo.
 
@@ -154,21 +181,40 @@ if [ -d "$HOME_DIR" ]; then
     rm -rf "$HOME_DIR"
 fi
 mkdir -p "$HOME_DIR"
-"$PYTHON" -m venv "$HOME_DIR/venv" || die "could not create a virtualenv in $HOME_DIR"
+
 VENV_PY="$HOME_DIR/venv/bin/python"
-spin "upgrading pip" "$VENV_PY" -m pip install --upgrade pip || \
-    warn "could not upgrade pip; continuing with the bundled one"
-ok "$HOME_DIR"
+if [ "$BACKEND" = uv ]; then
+    # `>=3.10` is a REQUEST, not a path: uv picks a satisfying interpreter it
+    # can already see, and downloads a managed one when it cannot.
+    if ! spin "creating the virtualenv" uv venv --python ">=3.$MIN_MINOR" "$HOME_DIR/venv"; then
+        sed 's/^/      /' "$HOME_DIR/install.log" >&2 2>/dev/null || true
+        die "uv could not create a virtualenv.
+      Re-run with YEET_NO_UV=1 to use python -m venv instead."
+    fi
+else
+    "$PYTHON" -m venv "$HOME_DIR/venv" || die "could not create a virtualenv in $HOME_DIR"
+    spin "upgrading pip" "$VENV_PY" -m pip install --upgrade pip || \
+        warn "could not upgrade pip; continuing with the bundled one"
+fi
+ok "$HOME_DIR ${MUTE}(python $("$VENV_PY" -c 'import platform; print(platform.python_version())' 2>/dev/null))${N}"
 
 # ── 3. the tool and its dependencies ──────────────────────────────────────────
 step "Installing yeet and its dependencies"
 info "from $REPO@$REF"
-if ! spin "resolving and downloading" "$VENV_PY" -m pip install "git+$REPO@$REF"; then
+INSTALL_FAILED=""
+if [ "$BACKEND" = uv ]; then
+    spin "resolving and downloading" uv pip install --python "$VENV_PY" "git+$REPO@$REF" \
+        || INSTALL_FAILED=1
+else
+    spin "resolving and downloading" "$VENV_PY" -m pip install "git+$REPO@$REF" \
+        || INSTALL_FAILED=1
+fi
+if [ -n "$INSTALL_FAILED" ]; then
     say ""
     sed 's/^/      /' "$HOME_DIR/install.log" >&2 2>/dev/null || true
-    die "pip failed. The full log is at $HOME_DIR/install.log"
+    die "the install failed. The full log is at $HOME_DIR/install.log"
 fi
-ok "$("$HOME_DIR/venv/bin/yeet" --version 2>/dev/null || echo yeet) ${MUTE}and 11 dependencies${N}"
+ok "$("$HOME_DIR/venv/bin/yeet" --version 2>/dev/null || echo yeet)"
 
 # ── 4. a launcher on PATH ─────────────────────────────────────────────────────
 # A tiny exec shim rather than a symlink: a symlink into the venv works, but a
@@ -248,8 +294,24 @@ fi
 # wrong does not fail loudly, it just prints a box with a ragged right edge,
 # which is exactly the kind of thing that makes an install feel unfinished.
 W=70; LEAD=3; CMD_W=12
-DESC_W=$((W - LEAD - CMD_W - 1))
 READY='yeet is ready.'
+
+# Fit the terminal, or do not draw a box at all. A fixed 72-column frame wraps
+# on an 80-column window with anything in the gutter and on every narrower one,
+# and a wrapped box does not look like a narrow box — it looks like corruption.
+COLS=$( (tput cols) 2>/dev/null || echo "${COLUMNS:-80}" )
+case "$COLS" in ''|*[!0-9]*) COLS=80 ;; esac
+[ "$((COLS - 2))" -lt "$W" ] && W=$((COLS - 2))
+DESC_W=$((W - LEAD - CMD_W - 1))
+
+if [ "$DESC_W" -lt 20 ]; then
+    say ""
+    printf '  %s%s%s\n\n' "$B$G" "$READY" "$N"
+    printf '  %syeet scan%s    what is this project?\n' "$B" "$N"
+    printf '  %syeet check%s   are the workflows correct?\n' "$B" "$N"
+    printf '  %syeet run%s     run them\n' "$B" "$N"
+    printf '  %syeet --help%s  every command\n' "$B" "$N"
+else
 
 printf '%s%s%s%s%s\n' "$ACCENT" "$TL" "$(rule $W)" "$TR" "$N"
 printf '%s%s%s  %s%s%s%s%*s%s%s%s\n' \
@@ -262,6 +324,9 @@ for pair in \
     "yeet --help|every command"
 do
     cmd=${pair%%|*}; desc=${pair#*|}
+    # Truncate rather than overflow: a description longer than the column
+    # would push the right border out and undo the arithmetic above.
+    desc=$(printf '%.*s' "$DESC_W" "$desc")
     printf '%s%s%s%*s%s%-*s%s %s%-*s%s%s%s%s\n' \
         "$ACCENT" "$VT" "$N" $LEAD '' \
         "$B" $CMD_W "$cmd" "$N" \
@@ -269,6 +334,7 @@ do
 done
 printf '%s%s%s%*s%s%s%s\n' "$ACCENT" "$VT" "$N" $W '' "$ACCENT" "$VT" "$N"
 printf '%s%s%s%s%s\n' "$ACCENT" "$BL" "$(rule $W)" "$BR" "$N"
+fi
 say ""
 printf '  %s\n' "$DOCKER_NOTE"
 

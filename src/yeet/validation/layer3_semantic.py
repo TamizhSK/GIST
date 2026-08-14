@@ -18,7 +18,7 @@ Not here, on purpose:
   spelled like a reference, which is E308 below.
 * **E315** — needs the image table and the project, so it fires in
   `executor/images.py` at run time. Documented in that file.
-* **W317** — unassigned.
+* **W317** — deprecated `::set-output::` and friends; implemented below.
 
 E302 calls `core.graph.find_cycle` — the SAME function the scheduler uses.
 Do not write a second cycle walk; two copies drift and then the validator
@@ -121,6 +121,7 @@ def check(wf: Workflow) -> DiagnosticBag:
     _check_action_refs(wf, bag)
     _check_runs_on(wf, bag)
     _check_unused_outputs(wf, bag)
+    _check_deprecated(wf, bag)
     return bag
 
 
@@ -508,6 +509,51 @@ def _all_expression_text(wf: Workflow) -> str:
             parts.extend(step.env.values())
             parts.extend(str(v) for v in step.with_.values())
     return "\n".join(parts)
+
+
+# --- W317 -------------------------------------------------------------------
+
+#: `::command::` forms GitHub removed, and what replaced them. `set-output` and
+#: `save-state` were disabled in 2023; `set-env` and `add-path` in 2020, for a
+#: security reason (they let untrusted output rewrite the environment of every
+#: later step).
+DEPRECATED_COMMANDS = {
+    "set-output": "write `name=value` to the file in $GITHUB_OUTPUT",
+    "save-state": "write `name=value` to the file in $GITHUB_STATE",
+    "set-env": "write `name=value` to the file in $GITHUB_ENV",
+    "add-path": "append the directory to the file in $GITHUB_PATH",
+}
+
+_DEPRECATED_RE = re.compile(r"::(" + "|".join(DEPRECATED_COMMANDS) + r")[ :]")
+
+
+def _check_deprecated(wf: Workflow, bag: DiagnosticBag) -> None:
+    """W317 — workflow commands GitHub has switched off.
+
+    A warning rather than an error, and the distinction is the point: these
+    still PARSE, and on GitHub they now do nothing at all. A step that ends
+    `echo "::set-output name=sha::$(git rev-parse HEAD)"` runs green on
+    GitHub and silently produces no output, so the job that reads
+    `steps.x.outputs.sha` gets an empty string and fails somewhere else
+    entirely. Saying so at check time is most of this rule's value — it is the
+    kind of thing that rots in a repo nobody has touched in two years.
+    """
+    for job in wf.jobs.values():
+        for step in job.steps:
+            for match in _DEPRECATED_RE.finditer(step.run or ""):
+                name = match.group(1)
+                bag.add(
+                    Diagnostic(
+                        code="YEET-W317",
+                        severity=Severity.WARNING,
+                        message=f"`::{name}::` was removed by GitHub and does nothing",
+                        file=wf.source,
+                        pos=_pos(step, "run"),
+                        help=f"Instead, {DEPRECATED_COMMANDS[name]}.",
+                        note="It still parses, so a workflow using it passes and "
+                        "quietly produces no value.",
+                    )
+                )
 
 
 # --- E307 — not called from `check`; see the module docstring ----------------

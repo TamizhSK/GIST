@@ -11,6 +11,7 @@ from yeet.core.events import META, STDERR, STDOUT, LogEvent
 from yeet.reporting.console import RunConsole
 from yeet.reporting.json_out import to_json
 from yeet.reporting.sarif import to_sarif
+from yeet.reporting.theme import BRANCH
 
 
 def test_run_console_emit() -> None:
@@ -64,11 +65,15 @@ def test_matrix_legs_each_print_one_header_when_interleaved() -> None:
         console.emit(LogEvent.now(job=job, step=step, stream=STDOUT, text="line"))
 
     output = buf.getvalue()
-    assert output.count("test (node 16)") == 1
-    assert output.count("test (node 18)") == 1
-    assert output.count("test (node 20)") == 1
-    assert output.count("run tests") == 3
-    assert output.count("collect") == 3
+    # The HEADER, not the bare name: once a run has more than one job every
+    # line carries a `job |` gutter, so the name legitimately appears many
+    # times. What must not repeat is the `> job [cooked]` banner.
+    assert output.count("> test (node 16) [cooked]") == 1
+    assert output.count("> test (node 18) [cooked]") == 1
+    assert output.count("> test (node 20) [cooked]") == 1
+    # One step header per job per step, still — three legs, two steps.
+    assert output.count(f"{BRANCH}> run tests") == 3
+    assert output.count(f"{BRANCH}> collect") == 3
 
 
 def test_to_json_exporter(tmp_path: Path) -> None:
@@ -111,3 +116,50 @@ def test_to_sarif_exporter(tmp_path: Path) -> None:
     assert len(results) == 1
     assert results[0]["ruleId"] == "YEET-W401"
     assert results[0]["level"] == "warning"
+
+
+def test_a_single_job_run_has_no_gutter() -> None:
+    """The common case stays exactly as clean as it was. A prefix on every
+    line of a one-job run would be pure noise — there is nothing to
+    disambiguate it from."""
+    buf = io.StringIO()
+    console = RunConsole(out=buf, color=False)
+
+    console.emit(LogEvent.now(job="build", step="compile", stream=STDOUT, text="hello"))
+
+    assert "|" not in buf.getvalue()
+    assert "hello" in buf.getvalue()
+
+
+def test_parallel_jobs_attribute_every_line() -> None:
+    """Three legs share one stream. Before the gutter, a reader got three
+    identical `+-- setup` headers and then `using node 16/18/20` in whatever
+    order the threads reached the sink — every line true, the block as a whole
+    saying nothing."""
+    buf = io.StringIO()
+    console = RunConsole(out=buf, color=False)
+
+    for job, text in [
+        ("test (node 16)", "using node 16"),
+        ("test (node 18)", "using node 18"),
+        ("test (node 16)", "done 16"),
+    ]:
+        console.emit(LogEvent.now(job=job, step="setup", stream=STDOUT, text=text))
+
+    lines = [ln for ln in buf.getvalue().splitlines() if "using node 18" in ln]
+    assert lines and lines[0].startswith("test (node 18) |"), lines
+
+
+def test_one_jobs_group_does_not_indent_another(tmp_path) -> None:
+    """`_group_depth` was a single shared counter while jobs emit from
+    parallel threads, so one job's `::group::` shifted another job's output
+    and either job's `::endgroup::` closed it."""
+    buf = io.StringIO()
+    console = RunConsole(out=buf, color=False, verbose=True)
+
+    console.emit(LogEvent.now(job="a", step="s", stream=STDOUT, text="::group::deps"))
+    console.emit(LogEvent.now(job="b", step="s", stream=STDOUT, text="plain"))
+
+    line = next(ln for ln in buf.getvalue().splitlines() if ln.endswith("plain"))
+    body = line.split("|", 1)[1] if "|" in line else line
+    assert body == "     plain", f"job b must keep its own indent, got {body!r}"
