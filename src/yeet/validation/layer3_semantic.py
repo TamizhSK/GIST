@@ -513,6 +513,26 @@ def _all_expression_text(wf: Workflow) -> str:
 # --- E307 — not called from `check`; see the module docstring ----------------
 
 
+def referenced_names(wf: Workflow, context: str) -> set[str]:
+    """Every name a workflow reads out of one context — `secrets` or `vars`.
+
+    The two are separate questions with one answer shape, and keeping them
+    separate is what lets `cmd_run` mask secret values and leave variables
+    legible: `${{ vars.NODE_ENV }}` resolving to `production` must not turn
+    every `production` in the log into `***`. The workflow itself is the only
+    thing that knows which name is which, because locally both come out of the
+    same `.env`.
+    """
+    pattern = re.compile(rf"{re.escape(context)}\s*\.\s*([\w-]+)")
+    found: set[str] = set()
+    for job in wf.jobs.values():
+        for text, _ in _secret_bearing_text(job):
+            found.update(pattern.findall(text))
+    for value in wf.env.values():
+        found.update(pattern.findall(value))
+    return found
+
+
 def check_secrets(wf: Workflow, available: set[str]) -> list[Diagnostic]:
     """E307 — `${{ secrets.X }}` where X is not in the store.
 

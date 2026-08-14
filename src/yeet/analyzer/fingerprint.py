@@ -9,8 +9,24 @@ from __future__ import annotations
 
 import json
 import re
-import tomllib
+import sys
 from pathlib import Path
+
+# `tomllib` is stdlib from 3.11. On 3.10 — which is what Ubuntu 22.04 LTS
+# ships, and therefore what a great many WSL installs have — it does not
+# exist, and `tomli` is the same library under its pre-stdlib name. Declared in
+# pyproject as a `python_version < "3.11"` dependency, so this fallback is
+# always satisfiable rather than a hopeful import.
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - exercised on 3.10 in CI
+    import tomli as tomllib
+
+# A `sys.version_info` branch rather than try/except ImportError: mypy special-
+# cases this form and type-checks the arm matching its `python_version`, where
+# the try/except form leaves it unable to resolve a 3.11-only stdlib module on
+# a 3.10 run and unable to drop the `type: ignore` on a 3.11 one — the same
+# no-spelling-is-green-everywhere bind `ctypes.windll` hit in `platform_.py`.
 
 from yeet.analyzer.markers import EXTENSION_MARKERS, MARKERS
 from yeet.core.project import Ecosystem

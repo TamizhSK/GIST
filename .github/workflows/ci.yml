@@ -13,11 +13,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.11", "3.12"]
+        python: ["3.10", "3.11", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: yeet
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -40,9 +37,6 @@ jobs:
     # new code without `make rules` is a red build instead of a doc that quietly
     # disagrees with what `yeet explain` prints.
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: yeet
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -58,9 +52,6 @@ jobs:
     # docker_backend.py — the highest-risk file in the repo — landed green.
     # ubuntu-latest ships a working daemon, so this costs a couple of minutes.
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: yeet
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

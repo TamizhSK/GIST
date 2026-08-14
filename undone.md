@@ -638,3 +638,18 @@ Every claim above was run. The two matrix/E303 fixes were checked by breaking
 them: reverting `expand()` fails
 `test_an_include_only_matrix_gives_one_leg_per_entry`, and the concurrency lock
 has a five-thread test that fails without it.
+
+
+
+
+
+
+# notes:
+
+the project should be able to run in LTS versions of python.
+the installable should be compatible and have a good TUI while installing in the terminal. keep that in mind
+the jobs should also run clean without any errors.
+
+also we should have a feature where if there are any secrets and variables for that job, we import them here to local machine, store it inside .env and when our project is used with the yeet commands to run the job, the keys should be fetched respectively and work without any errors.
+
+make the TUI better at installation as well as at runtime of the jobs

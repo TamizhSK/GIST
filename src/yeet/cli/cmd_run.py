@@ -41,6 +41,7 @@ from yeet.planner.plan import ExecutionPlan, build_plan
 from yeet.reporting.live import make_console
 from yeet.storage.builtin import run_builtin
 from yeet.storage.runs import RunStore
+from yeet.validation.layer3_semantic import referenced_names
 from yeet.validation.pipeline import validate_file
 
 
@@ -75,19 +76,30 @@ def run(
     # Secrets are resolved BEFORE the contexts are built, because they are one
     # of the contexts. `--secret K=V` wins over the store, which wins over
     # `.env` — `load_secrets` owns that precedence.
-    secrets = _load_secrets(root, _parse_secrets(secret or []))
+    pool = _load_secrets(root, _parse_secrets(secret or []))
 
     # E307 — the one Layer 3 rule that needs data Layer 3 cannot reach. The
     # store is tier 5 and validation is tier 3, so the rule lives there as a
     # pure function and the names are handed to it from here. Gated like the
     # rest of layer 3: a workflow that reads a secret nobody set fails at the
     # step that uses it, minutes in, with an empty string and no explanation.
-    _gate(_secret_bag(workflow, set(secrets)), target)
+    _gate(_secret_bag(workflow, set(pool)), target)
+
+    # `.env` and the store are ONE pool of values; the workflow decides which
+    # of them are secrets and which are variables, because that is the only
+    # place the distinction is written down. It matters twice over: only the
+    # secret half is masked (masking `vars.NODE_ENV=production` would replace
+    # every "production" in the log with `***`), and only the secret half is
+    # gated by E307.
+    secret_names = referenced_names(workflow, "secrets")
+    var_names = referenced_names(workflow, "vars")
+    variables = {k: v for k, v in pool.items() if k in var_names and k not in secret_names}
+    secrets = {k: v for k, v in pool.items() if k not in variables}
 
     masker = Masker()
-    masker.update(secrets.values())
+    masker.update(secrets[k] for k in secret_names if k in secrets)
 
-    contexts = _contexts(root, event, secrets)
+    contexts = _contexts(root, event, secrets, variables)
     plan = build_plan(workflow, contexts)
     if job is not None:
         plan = _only(plan, job)
@@ -187,7 +199,9 @@ def _load_secrets(root: Path, overrides: dict[str, str]) -> dict[str, str]:
     return dict(overrides)
 
 
-def _contexts(root: Path, event: str, secrets: dict[str, str]) -> Contexts:
+def _contexts(
+    root: Path, event: str, secrets: dict[str, str], variables: dict[str, str]
+) -> Contexts:
     """The RUN-WIDE contexts for `${{ }}` — the ones that cannot vary per job.
 
     `secrets` is passed in rather than left empty: `Contexts` has had the field
@@ -207,6 +221,7 @@ def _contexts(root: Path, event: str, secrets: dict[str, str]) -> Contexts:
     contexts.root = root
     contexts.github = dict(build_github_context(root, event))
     contexts.secrets = dict(secrets)
+    contexts.vars = dict(variables)
     return contexts
 
 

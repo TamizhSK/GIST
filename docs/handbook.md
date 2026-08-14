@@ -14,7 +14,7 @@ The other documents, and when to open them:
 | [`getting-started.md`](getting-started.md) | Day-0 machine setup | your environment is broken |
 | [`rules.md`](rules.md) | every diagnostic code — **generated** | a code fires and you don't know what it means |
 | [`adr/`](adr/) | the eight decisions we can't relitigate casually | you're about to argue with one of them |
-| [`../../plan.md`](../../plan.md) | who owns what, day by day | you need your next task |
+| [`../plan.md`](../plan.md) | who owns what, day by day | you need your next task |
 
 ---
 

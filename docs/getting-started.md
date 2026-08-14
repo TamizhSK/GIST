@@ -12,14 +12,14 @@ this one says *where each thing lives* and *what to do in which order*.
 > record.
 
 ```bash
-git clone <this repo> && cd yeet
+git clone <this repo> && cd GIST
 python -m venv .venv && source .venv/bin/activate   # PS: .venv\Scripts\Activate.ps1
 pip install -e ".[dev]" && pre-commit install
 make check                                          # must be green before you start
 ```
 
 Day 0's mechanical work is done: the skeleton lints, type-checks, satisfies the
-tier contract and `yeet --help` runs. See [`../../plan.md`](../../plan.md) §0 for
+tier contract and `yeet --help` runs. See [`../plan.md`](../plan.md) §0 for
 exactly what changed and [`adr/0007`](adr/0007-tier-rule-consequences.md) for the
 architectural consequences that this document's §1 tree predates.
 

@@ -407,3 +407,47 @@ def test_graph_renders_the_dag(project: Path) -> None:
     result = yeet("graph", cwd=project)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "build" in result.stdout
+
+
+def test_a_variable_resolves_and_is_not_masked(tmp_path: Path) -> None:
+    """The other half of `test_a_secret_resolves_and_is_masked`.
+
+    `Contexts.vars` had the same disease `secrets` did — a field that parsed,
+    existed, and was never populated, so `${{ vars.X }}` was the empty string.
+    Both halves have to be asserted together, because the fix for one is the
+    place you can break the other: masking is driven by which names the
+    workflow reads under `secrets.`, so a bug there either leaves a token in
+    the log or redacts an innocent value like `production` everywhere it
+    appears.
+    """
+    flows = tmp_path / ".yeet" / "flows"
+    flows.mkdir(parents=True)
+    (flows / "main.yml").write_text(
+        "name: vars\n"
+        "on: {push: {}}\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: local\n"
+        "    steps:\n"
+        "      - shell: bash\n"
+        '        run: echo "region=$REGION token=${#TOKEN}"\n'
+        "        env:\n"
+        "          REGION: ${{ vars.AWS_REGION }}\n"
+        "          TOKEN: ${{ secrets.API_TOKEN }}\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    (tmp_path / ".env").write_text(
+        "AWS_REGION=eu-west-1\nAPI_TOKEN=hunter2-the-real-token\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
+
+    result = yeet("run", cwd=tmp_path)
+    combined = result.stdout + result.stderr
+
+    assert result.returncode == 0, combined
+    assert "region=eu-west-1" in combined, "a variable must resolve AND stay legible"
+    assert "token=22" in combined, "the secret's value must reach the step"
+    assert "hunter2-the-real-token" not in combined, "and never appear in the log"

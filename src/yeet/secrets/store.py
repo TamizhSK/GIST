@@ -219,14 +219,14 @@ def load_secrets(
     need any secrets, but it must never be silent either.
     """
     secrets: dict[str, str] = {}
-    secrets.update(_read_dotenv(root))
+    secrets.update(read_dotenv(root))
     secrets.update(_read(root, passphrase))
     if overrides:
         secrets.update(overrides)
     return secrets
 
 
-def _read_dotenv(root: Path) -> dict[str, str]:
+def read_dotenv(root: Path) -> dict[str, str]:
     """`.env`, lowest precedence. Never fails: it is not our file."""
     env_file = root / ".env"
     out: dict[str, str] = {}

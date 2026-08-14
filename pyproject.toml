@@ -6,7 +6,13 @@ build-backend = "hatchling.build"
 name = "yeet"
 version = "0.1.0"
 description = "A local GitHub Actions-compatible runner with a dialect of its own"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
+# 3.10, not 3.11, because that is what Ubuntu 22.04 LTS ships — and therefore
+# what a great many WSL installs have by default. Requiring 3.11 meant the
+# single most common Linux-on-Windows environment could not install the tool
+# without first building a Python. 3.10 is supported upstream until Oct 2026;
+# macOS's system 3.9 is deliberately still out of scope (EOL, and it predates
+# too much of the typing we use).
 dependencies = [
     "typer>=0.12",
     "rich>=13.7",
@@ -19,6 +25,9 @@ dependencies = [
     "pathspec>=0.12",
     "cryptography>=42.0",
     "jinja2>=3.1",
+    # `tomllib` became stdlib in 3.11; on 3.10 this is the same library under
+    # its original name. analyzer/fingerprint.py imports one or the other.
+    'tomli>=2.0; python_version < "3.11"',
 ]
 
 [project.optional-dependencies]
@@ -46,13 +55,13 @@ markers = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "PTH"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.10"
 strict = true
 files = ["src"]
 
@@ -60,6 +69,7 @@ files = ["src"]
 # the moment Dev C writes `import docker` — which is Day 2, not Day 5.
 [[tool.mypy.overrides]]
 module = [
+    "tomli",
     "docker.*",
     "watchdog.*",
     "ruamel.*",

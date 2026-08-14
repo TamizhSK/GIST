@@ -136,7 +136,19 @@ def _extract(tar_path: Path, dest: Path) -> None:
     """
     dest.mkdir(parents=True, exist_ok=True)
     with tarfile.open(tar_path, "r") as tar:
-        tar.extractall(path=dest, filter="data")
+        try:
+            tar.extractall(path=dest, filter="data")
+        except TypeError as exc:
+            # The `filter` argument was backported to 3.9.17 / 3.10.12 /
+            # 3.11.4; an older patch release of a version we otherwise support
+            # raises TypeError here. Refuse rather than retry without it —
+            # falling back silently is how a security fix becomes optional, and
+            # a cache that will not restore is a far smaller problem than an
+            # archive that writes outside the workspace.
+            raise RuntimeError(
+                "this Python is too old to extract archives safely "
+                f"({exc}). Upgrade to 3.10.12+, 3.11.4+, or any 3.12+."
+            ) from exc
 
 
 def _arcname(path: Path, base: Path) -> str:

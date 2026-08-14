@@ -205,7 +205,20 @@ class LiveRunConsole:
             highlight=False,
             soft_wrap=True,
         )
-        self._live = Live(console=self._console, refresh_per_second=REFRESH_HZ, transient=False)
+        self._live = Live(
+            console=self._console,
+            refresh_per_second=REFRESH_HZ,
+            transient=False,
+            # rich's default here is "ellipsis", which crops the BOTTOM of a
+            # renderable taller than the terminal. The tree grows downward and
+            # the running step is always its last row, so the default hides
+            # precisely the part a live view exists to show: on any run with
+            # more than a screenful, you would watch a static list of finished
+            # steps and an ellipsis. "visible" lets the earlier rows scroll up
+            # into the scrollback, where they are still readable, which is what
+            # a build log should do anyway.
+            vertical_overflow="visible",
+        )
         self._jobs: dict[str, _JobNode] = {}
         self._order: list[str] = []
         self._lock = threading.Lock()

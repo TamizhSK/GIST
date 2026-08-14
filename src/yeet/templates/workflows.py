@@ -25,7 +25,13 @@ GITIGNORE_BLOCK = """\
 # yeet runtime state
 .yeet/tmp/
 .yeet/runs/
+.yeet/artifacts/
 .yeet/.secrets/
+
+# `yeet secrets import` writes real tokens here in the clear. The encrypted
+# store (`yeet secrets set`) is the alternative; either way this file is not
+# something to commit.
+.env
 """
 
 

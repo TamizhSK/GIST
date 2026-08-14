@@ -171,7 +171,7 @@ def run_steps(config: StepLoopConfig, executor: StepExec) -> list[StepResult]:
             continue
 
         if step.uses and not step.run:
-            outcome = _run_uses(config, step, name, post)
+            outcome = _run_uses(config, step, name, post, step_ctx)
             if isinstance(outcome, list):
                 queue[:0] = outcome  # a composite: run its steps in its place
                 index -= 1  # the `uses:` line is not itself a step that ran
@@ -216,6 +216,7 @@ def _run_uses(
     step: Step,
     name: str,
     post: list[Callable[[], None]],
+    contexts: Contexts | None,
 ) -> list[Step] | StepResult:
     """A `uses:` step: inline it, run a built-in, or skip it with a reason.
 
@@ -244,7 +245,7 @@ def _run_uses(
         return plan.steps
 
     if plan.kind == uses_mod.BUILTIN:
-        return _run_builtin(config, step, name, plan, post)
+        return _run_builtin(config, step, name, plan, post, contexts)
 
     _emit(config, name, META, f"skipped (not the vibe): {plan.reason}")
     _conclude(config, step, Status.SKIPPED)
@@ -257,6 +258,7 @@ def _run_builtin(
     name: str,
     plan: Any,
     post: list[Callable[[], None]],
+    contexts: Contexts | None,
 ) -> StepResult:
     """Invoke the built-in through the runner the CLI handed us.
 
@@ -280,7 +282,7 @@ def _run_builtin(
         # bind-mounts at /workspace, so a file the container just wrote is
         # visible here at the same relative path.
         workspace=config.root,
-        inputs=dict(step.with_),
+        inputs=_expanded_with(config, step, contexts),
         emit=lambda line: _emit(config, name, STDOUT, line),
         post=post,
     )
@@ -304,6 +306,24 @@ def _run_builtin(
         exit_code=0 if outcome.ok else 1,
         duration_s=time.monotonic() - started,
     )
+
+
+def _expanded_with(
+    config: StepLoopConfig, step: Step, contexts: Contexts | None
+) -> dict[str, object]:
+    """`with:` with its `${{ }}` resolved, for a built-in action.
+
+    The run path gets this for free — `_layered_env` expands every value on its
+    way out — but a built-in never becomes an environment, so its inputs were
+    handed over raw. A matrix of two legs therefore uploaded both artifacts
+    under the single literal name `out-${{ matrix.leg }}` and shared one cache
+    key: the second leg overwrote the first, and the log said so in a string
+    the user could read and still not notice.
+    """
+    return {
+        key: expand(value, contexts, config.degraded) if isinstance(value, str) else value
+        for key, value in step.with_.items()
+    }
 
 
 def _conclude(config: StepLoopConfig, step: Step, status: Status) -> None:
