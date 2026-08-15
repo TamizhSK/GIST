@@ -34,7 +34,7 @@ def inline(
     `INPUT_*` env. The executor prepends these to the job's step list.
     """
     input_env = apply_inputs(action, with_, bag, file=file, pos=pos)
-    return composite_steps(action, input_env)
+    return composite_steps(action, input_env, dict(with_))
 
 
 __all__ = ["inline"]

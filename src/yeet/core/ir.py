@@ -36,6 +36,16 @@ class Step:
     continue_on_error: bool = False  # delulu:
     timeout_minutes: int | None = None  # patience:
     key_pos: dict[str, Position] = field(default_factory=dict)
+    action_inputs: dict[str, str] | None = None
+    """The `inputs` context for a step INLINED FROM A COMPOSITE ACTION.
+
+    None for a step written in the workflow, and that is the distinction that
+    matters: `${{ inputs.x }}` inside a composite action means the ACTION's
+    input, and once the steps are inlined nothing else can tell them apart. It
+    travels on the step because `INPUT_X` in the env — which did work — only
+    ever reached `$INPUT_X` in a shell, so the expression form silently
+    resolved to an empty string. Two spellings of one value, one of them a
+    lie."""
 
     @property
     def display_name(self) -> str:

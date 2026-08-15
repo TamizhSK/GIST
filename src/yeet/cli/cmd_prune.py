@@ -17,6 +17,7 @@ from typing import Annotated
 
 import typer
 
+from yeet.actions.resolver import prune_actions
 from yeet.cli import EXIT_NO_DOCKER
 from yeet.executor.backend import DockerUnavailable, get_docker_client
 from yeet.executor.build import prune as prune_images
@@ -33,6 +34,10 @@ def prune(
         bool,
         typer.Option("--all", help="Every project's images, not just this one's."),
     ] = False,
+    actions: Annotated[
+        bool,
+        typer.Option("--actions", help="Also empty the fetched-action cache."),
+    ] = False,
 ) -> None:
     """Remove this project's images, its leftover containers, and `.yeet/tmp/`.
 
@@ -42,6 +47,11 @@ def prune(
     container a run in another terminal is still writing to. `--all` sweeps
     everything this tool has ever built on the machine.
 
+    `--actions` empties the cache of `uses: owner/repo@ref` checkouts. Opt-in
+    rather than part of the default sweep, because refilling it needs the
+    network — the one thing in here that cannot be rebuilt offline — and it is
+    shared by every project on the machine rather than scoped to this one.
+
     Never touches `.yeet/runs/` — those are the JSONL logs `yeet logs` replays,
     and silently deleting a user's run history to reclaim a few kilobytes would
     be a poor trade.
@@ -50,6 +60,10 @@ def prune(
 
     removed_dirs = prune_tmp(root)
     typer.echo(f"removed {removed_dirs} run scratch director{'y' if removed_dirs == 1 else 'ies'}")
+
+    if actions:
+        removed_actions = prune_actions()
+        typer.echo(f"removed {removed_actions} cached action(s)")
 
     if not images:
         return

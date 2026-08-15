@@ -617,6 +617,7 @@ def format_summary(
     level: ColorLevel | None = None,
     panel: bool = False,
     width: int | None = None,
+    stream: TextIO | None = None,
 ) -> str:
     """The one final-line format, shared by `RunConsole` and the live renderer
     (`reporting.live`) so a run looks the same whether it was piped or watched
@@ -636,6 +637,14 @@ def format_summary(
     `status` is a `core.result.Status` value (`"slayed"`, `"flopped"`, ...),
     not `STATUS_SKIPPED`'s display text — this only ever renders a run's
     overall status, and a run is never "skipped".
+
+    `stream` is THE stream this text is about to be written to, and it must be
+    the caller's own. The box glyphs are chosen by asking what can be encoded,
+    and the default — `sys.stdout` — is the wrong stream whenever the caller
+    writes anywhere else. `RunConsole(out=...)` does exactly that, so a
+    `yeet run > out.txt` on a cp1252 machine picked the Unicode box by asking
+    the console and then raised `UnicodeEncodeError` writing it to the file:
+    the encoding gate was real, and pointed at the wrong thing.
     """
     if level is None:
         level = color_level()
@@ -652,7 +661,9 @@ def format_summary(
     if panel:
         inner = _panel_width(width)
         if inner >= PANEL_MIN_WIDTH:
-            return _summary_panel(workflow_name, verdict, duration_s, detail, ink, level, inner)
+            return _summary_panel(
+                workflow_name, verdict, duration_s, detail, ink, level, inner, stream
+            )
 
     suffix = f" ({', '.join(detail)})" if detail else ""
     status_str = paint(verdict, ink, level=level)
@@ -667,13 +678,14 @@ def _summary_panel(
     ink: Ink,
     level: ColorLevel,
     inner: int,
+    stream: TextIO | None = None,
 ) -> str:
     """The framed close. Every row is measured as PLAIN text and coloured
     afterwards, because an ANSI escape is zero columns wide and `len()` of a
     coloured string is the classic way to get a box whose right edge wobbles by
     exactly the length of a colour code.
     """
-    tl, tr, bl, br, horizontal, vertical, bullet = panel_glyphs()
+    tl, tr, bl, br, horizontal, vertical, bullet = panel_glyphs(stream)
     top = paint(tl + horizontal * inner + tr, ACCENT, level=level)
     bottom = paint(bl + horizontal * inner + br, ACCENT, level=level)
     bar = paint(vertical, ACCENT, level=level)

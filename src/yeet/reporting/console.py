@@ -223,5 +223,9 @@ class RunConsole:
                 # colour may still be a 16-colour one.
                 level=self._level,
                 panel=False,
+                # Harmless while `panel=False`, and correct the moment that
+                # changes: the glyphs must be chosen by asking the stream we
+                # write to, which is `self.out` and not `sys.stdout`.
+                stream=self.out,
             ),
         )

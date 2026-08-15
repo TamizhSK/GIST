@@ -20,6 +20,82 @@ yeet logs                 # replay the last run
 
 That's the whole product in five commands.
 
+## How it works
+
+`yeet run` is the full pipeline, and **every other command is a shorter prefix
+of it** — `scan` stops after analysis, `check` after validation, `graph` after
+planning. The one idea that makes it a product rather than a script is the
+**gate**: a workflow file with errors never creates a container.
+
+```
+ yeet run — the whole product in one picture (each command is a prefix of it)
+
+  project dir            workflow .yml         IR (dataclasses)       side effects
+┌─────────────────┐   ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐
+│ 1. ANALYZER     │──▶│ 2. VALIDATE      │──▶│ 4. PLAN          │──▶│ 5. EXECUTE       │
+│  find_root()    │   │  (the GATE)      │   │  matrix.py →     │   │  one container   │
+│  discover()     │   │  5 layers,       │   │  topo_waves →    │   │  per job, one    │
+│  fingerprint()  │   │  errors → exit 2 │   │  ExecutionPlan   │   │  exec per step   │
+└─────────────────┘   └────────┬─────────┘   └──────────────────┘   └────────┬─────────┘
+                               │                                             │
+                               ▼                                             ▼
+                    ┌──────────────────┐                         ┌──────────────────┐
+                    │ 3. IR BUILDER    │                         │ 6. OUTPUT        │
+                    │  parser +        │                         │  RunConsole      │
+                    │  aliases +       │                         │  (live tree)     │
+                    │  builder → IR    │                         │  RunStore (JSONL)│
+                    └──────────────────┘                         └──────────────────┘
+```
+
+Stages 2 and 3 together are the validator: parse the file, normalise any dialect
+keys to canonical GitHub Actions, build the internal representation, then run
+five check layers over it.
+
+```
+  THE VALIDATION PIPELINE — layer 4 prints opinions, only 0–3 can stop the run
+
+  layer 0  bytes           E001 unreadable · E002 empty · E005 tabs · W006 CRLF
+  layer 1  YAML            ruamel round-trip · E102 duplicate keys · W105 on:→True
+  ── dialect pass          parser/aliases.py::normalize()  → canonical keys
+  layer 2  schema          jsonschema against the canonical form · did-you-mean
+  ── builder               parser/builder.py → Workflow IR (positions set AS built)
+  layer 3  semantics       E301 needs→unknown job · E302 cycles · expressions
+  layer 4  lint            W402 moving refs · W404 hardcoded secrets · W409 host paths
+
+  any error in layers 0–3?  ──yes──▶  render rustc-style code frames · exit 2
+                                       NO CONTAINER WAS EVER CREATED
+```
+
+If the file is clean, the planner turns the IR into waves of runnable jobs, the
+executor runs them, and every log line flows through a single fan-out: a live
+tree on your terminal **and** a JSONL file that `yeet logs` replays later.
+
+## The architecture — one rule
+
+The whole codebase is organised into eight tiers, and the rule is enforced by
+`lint-imports` on every push: **imports only ever point downhill.** A module may
+import from lower tiers, never from a higher one and never from a sibling on the
+same line.
+
+```
+  tier 7   cli/            the only tier that may import anything
+  tier 6   triggers/       file watcher · git hooks
+  tier 5   executor/ · storage/ · secrets/      siblings — MAY NOT import each other
+  tier 4   planner/        matrix · DAG · waves
+  tier 3   validation/     the five-layer gate
+  tier 2   parser/ · analyzer/ · actions/       siblings — actions resolves, never runs
+  tier 1   expressions/ · reporting/            siblings
+  tier 0   core/           imports nothing from us. Ever. (closed)
+```
+
+When the rule blocks an import, the fix is always the same move: **push the pure
+part down into `core/` and leave the policy up top.** That single trick resolved
+every conflict it caused — `core/masking.py` (a pure `Masker` the executor uses),
+`core/events.py` (a `LogSink` protocol so the executor never touches `storage/`),
+`core/graph.py` (cycle detection shared by validation and planning). `core/` is
+closed: `ir.py` and `diagnostics.py` are frozen, and adding a sixth file there
+takes the whole team.
+
 ## Install
 
 One line, on Linux, macOS, or WSL. It installs into its own isolated
@@ -87,7 +163,34 @@ want to test what you are editing.
 `yeet run --clean` gives each job an empty workspace instead and lets
 `actions/checkout` fill it, exactly as GitHub does. That catches the two things
 the bind mount hides — a workflow with no `checkout` step at all, and one that
-only passes because of a file you have not committed yet.
+only passes because of a file you have not committed yet. (A workflow with no
+`checkout` anywhere is called out on every normal run too, since it works here
+for a reason that will not exist in CI.)
+
+### Actions from the marketplace
+
+`uses: owner/repo@ref` is fetched and, if it is a composite action, inlined and
+run. Any ref works, including the full commit SHA that
+[`YEET-W402`](docs/rules.md#yeet-w402) asks you to pin to.
+
+The fetch happens once per ref and says so on the step's own line, because a
+`uses:` line reaching the network is worth seeing. It is cached under your
+platform cache directory — forever for a SHA or an exact tag, and for a day for
+a moving `@v4`, which is re-pointed by its author at every minor release.
+
+```console
+$ yeet run --offline     # never fetch; use what is already cached
+$ yeet prune --actions   # empty that cache
+```
+
+`YEET_OFFLINE=1` does the same as the flag, and `YEET_ACTION_TTL` (seconds)
+changes how long a moving ref is reused.
+
+`actions/checkout`, `cache`, `upload-artifact` and `download-artifact` are
+built in rather than fetched — on GitHub they talk to a hosted service that
+does not exist here, so what a local runner owes you is their behaviour, not
+their JavaScript. Docker and node actions are still skipped, now with a message
+naming which of the two it was.
 
 ## Secrets and variables, imported locally
 
@@ -108,14 +211,14 @@ adds a workflow.
 
 ## Status
 
-All five subsystems are implemented and wired end to end. `yeet scan → check →
+All five stages are implemented and wired end to end. `yeet scan → check →
 graph → run → logs` works on both the dialect and canonical GitHub Actions
 syntax, and the whole suite is green:
 
 ```
 make check     six gates green (lint · format · imports · types · noprint · test)
-pytest         787 fast tests, plus 18 against a live Docker daemon
-mypy src       102 source files, strict
+pytest         841 fast tests, plus 18 against a live Docker daemon
+mypy src       104 source files, strict
 lint-imports   2 contracts kept, 0 broken
 ```
 

@@ -10,7 +10,7 @@ import textwrap
 from pathlib import Path
 
 from yeet.actions.composite import inline
-from yeet.actions.resolver import apply_inputs, resolve, resolve_remote
+from yeet.actions.resolver import _ref_slug, apply_inputs, resolve, resolve_remote
 from yeet.core.diagnostics import DiagnosticBag
 from yeet.parser.aliases import normalize
 from yeet.parser.builder import build_workflow
@@ -315,7 +315,7 @@ def test_remote_resolves_and_caches(tmp_path):
     assert action.kind == "composite"
     assert not bag.items
     assert cloned[0][0] == "https://github.com/actions/checkout.git"
-    assert (tmp_path / "cache" / "actions" / "checkout" / "v4").is_dir()
+    assert (tmp_path / "cache" / "actions" / "checkout" / _ref_slug("v4")).is_dir()
 
 
 def test_remote_cache_hit_skips_clone(tmp_path):
@@ -340,8 +340,23 @@ def test_remote_refs_are_distinct_by_ref(tmp_path):
     resolve_remote("actions/checkout@v5", bag, cache_root=cache, git_clone=fake)
 
     assert len(cloned) == 2
-    assert (cache / "actions" / "checkout" / "v4").is_dir()
-    assert (cache / "actions" / "checkout" / "v5").is_dir()
+    assert (cache / "actions" / "checkout" / _ref_slug("v4")).is_dir()
+    assert (cache / "actions" / "checkout" / _ref_slug("v5")).is_dir()
+
+
+def test_a_ref_is_one_path_segment_however_it_is_spelled(tmp_path):
+    """`feature/x` is a legal branch and a two-segment path.
+
+    Left alone it nests a level deeper than the cache expects, and it collides
+    with a branch called `feature` — one wants to be a directory where the
+    other is a file. Flattening alone is not enough either: `a/b` and `a-b`
+    both flatten to `a-b`, so the hash of the REAL ref is what separates them.
+    """
+    for ref in ("feature/x", "release/2.0/final", "v4"):
+        assert "/" not in _ref_slug(ref), ref
+
+    assert _ref_slug("a/b") != _ref_slug("a-b")
+    assert _ref_slug("v4") == _ref_slug("v4"), "and it must be stable"
 
 
 def test_remote_failed_clone_is_e313(tmp_path):

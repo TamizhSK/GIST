@@ -16,9 +16,22 @@ from pathlib import Path, PurePath, PureWindowsPath
 from yeet.executor.platform_ import is_wsl
 
 CONTAINER_WORKSPACE = "/workspace"
-"""Where the project root is bind-mounted inside every job container. Absolute
-and fixed: step scripts, `working-directory` and GITHUB_WORKSPACE all derive
-from it, and a configurable mount point would buy nothing but bug reports."""
+"""Where the job's workspace is bind-mounted inside every job container.
+Absolute and fixed: step scripts, `working-directory` and GITHUB_WORKSPACE all
+derive from it, and a configurable mount point would buy nothing but bug
+reports.
+
+Usually the project root. Under `yeet run --clean` it is the job's own empty
+directory, which `actions/checkout` fills — see `workspace.isolated_workspace`."""
+
+CONTAINER_JOB_DIR = "/yeet-run"
+"""Where the job's scratch directory is bind-mounted, and ONLY needed when the
+workspace is isolated.
+
+`.yeet/tmp/<run>/<job>/` holds the step scripts and the five state files. In a
+normal run it sits inside the project root and arrives for free under
+/workspace. An isolated workspace is a different directory, so without a second
+bind the container would be handed a script path it cannot see."""
 
 WSL_WINDOWS_MOUNT = "/mnt/"
 """WSL mounts the Windows drives here. A repo living under /mnt/c crosses the
@@ -53,6 +66,19 @@ def _looks_windows(host: PurePath) -> bool:
     return len(text) >= 2 and text[1] == ":" and text[0].isalpha()
 
 
+def to_mounted_path(host: Path, base: Path, mount_point: str) -> str:
+    """A path under `base` on the host -> where it lands under `mount_point`.
+
+    The general form. A job normally has one bind (the project root at
+    /workspace) and an isolated job — `yeet run --clean` — has two, because its
+    step scripts live outside the workspace it is given. Both are the same
+    question asked about different mounts.
+    """
+    rel = host.resolve().relative_to(base.resolve())
+    tail = rel.as_posix()
+    return f"{mount_point}/{tail}" if tail != "." else mount_point
+
+
 def to_workspace_path(host: Path, root: Path) -> str:
     """A path inside the project -> its location under /workspace.
 
@@ -60,8 +86,7 @@ def to_workspace_path(host: Path, root: Path) -> str:
     `<root>/.yeet/tmp/...` on the host and executed as
     `/workspace/.yeet/tmp/...` inside the container.
     """
-    rel = host.resolve().relative_to(root.resolve())
-    return f"{CONTAINER_WORKSPACE}/{rel.as_posix()}"
+    return to_mounted_path(host, root, CONTAINER_WORKSPACE)
 
 
 def warn_if_slow_mount(root: Path) -> str | None:

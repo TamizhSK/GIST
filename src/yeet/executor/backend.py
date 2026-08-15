@@ -32,6 +32,16 @@ class JobContext:
     """
 
     workspace: Path
+    """THE directory the job's steps run in, on the host side of the mount.
+
+    Equal to the project root for a normal run — the working tree is bind-mounted
+    and you are testing what you are editing. Under `yeet run --clean` it is this
+    job's own empty directory, and `actions/checkout` fills it exactly as on
+    GitHub. Per JOB, not per run: two legs of a matrix must not share a checkout.
+
+    A backend must read this and never substitute its own root. It went four
+    sessions with no reader at all, which is why `--clean` created an empty
+    directory and then ran against the working tree anyway."""
     env: dict[str, str] = field(default_factory=dict)
     secrets: Masker = field(default_factory=Masker)
     sink: LogSink | None = None
@@ -50,6 +60,9 @@ class JobContext:
     run_id: str = ""
     """Empty means "make one". The runner sets it so every job of a run shares
     a scratch directory and a log directory."""
+    offline: bool = False
+    """`yeet run --offline` — a remote `uses:` may be served from the action
+    cache but must not fetch."""
 
 
 @runtime_checkable

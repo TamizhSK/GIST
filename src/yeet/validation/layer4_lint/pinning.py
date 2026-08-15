@@ -7,21 +7,17 @@ See docs/architecture.md
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from yeet.core.diagnostics import Diagnostic, Position, Severity
 from yeet.core.ir import Workflow
+from yeet.core.refs import is_moving
 from yeet.validation.layer4_lint.base import register
 
-#: Refs that are re-pointed in place, so `uses: x@main` is a different action
-#: tomorrow than it is today.
-_MOVING_REFS = frozenset({"main", "master", "head", "latest"})
-
-#: `@v4` is also a moving ref — GitHub's convention is that the major tag is
-#: re-pointed at every minor release. It was previously a hardcoded ("v1", "v2")
-#: list, which quietly let `@v3` and up through for no stated reason.
-_MAJOR_VERSION_REF = re.compile(r"v\d+")
+# Which refs move lives in `core/refs.py`, not here. The resolver's action
+# cache asks the same question — whether `@v4` may be reused forever — and it
+# sits at tier 2, which may not import this module. Two copies of the list
+# would have been free to drift with nothing able to fail when they did.
 
 
 class PinningRule:
@@ -59,7 +55,7 @@ class PinningRule:
             for step in job.steps:
                 if step.uses:
                     ref = step.uses.split("@")[-1] if "@" in step.uses else ""
-                    if ref in _MOVING_REFS or _MAJOR_VERSION_REF.fullmatch(ref):
+                    if ref and is_moving(ref):
                         diags.append(
                             Diagnostic(
                                 code="YEET-W402",

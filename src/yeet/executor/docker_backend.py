@@ -33,7 +33,13 @@ from yeet.executor.backend import (
 )
 from yeet.executor.build import project_slug
 from yeet.executor.images import ImageKind, ImageResolutionError, ImageSpec, resolve_image
-from yeet.executor.paths import CONTAINER_WORKSPACE, to_container_path, to_workspace_path
+from yeet.executor.paths import (
+    CONTAINER_JOB_DIR,
+    CONTAINER_WORKSPACE,
+    to_container_path,
+    to_mounted_path,
+    to_workspace_path,
+)
 from yeet.executor.platform_ import docker_user
 from yeet.executor.steps import (
     Chunk,
@@ -44,6 +50,7 @@ from yeet.executor.steps import (
     run_steps,
 )
 from yeet.executor.workspace import RunLayout, create, slug
+from yeet.expressions.contexts import Contexts
 from yeet.planner.plan import JobInstance
 
 KEEPALIVE_CMD = ["tail", "-f", "/dev/null"]
@@ -251,17 +258,36 @@ class DockerBackend:
         base = env_mod.container_base_env(run_id=layout.run_id, job_key=inst.key, event=ctx.event)
         base.update(ctx.env)
 
+        # An isolated workspace (`yeet run --clean`) is not inside the tree we
+        # mount at /workspace, so the step scripts under `.yeet/tmp/` need a
+        # mount of their own and a path that points into it.
+        workspace = ctx.workspace or self.root
+        isolated = workspace.resolve() != self.root.resolve()
+        # `$RUNNER_TEMP` is `/workspace/.yeet/tmp` in there, and on GitHub it
+        # always exists. An action that writes to it — `upload-pages-artifact`
+        # tars into it — fails on `No such file or directory` otherwise, which
+        # names the tar and not the missing directory. Free in a normal run
+        # (the layout already made it); the isolated workspace is new every job.
+        (workspace / ".yeet" / "tmp").mkdir(parents=True, exist_ok=True)
+        to_step = (
+            (lambda path: to_mounted_path(path, job_layout.dir, CONTAINER_JOB_DIR))
+            if isolated
+            else (lambda path: to_workspace_path(path, self.root))
+        )
+
         config = StepLoopConfig(
             job=inst.job,
             job_key=inst.key,
             layout=job_layout,
             root=self.root,
+            workspace=workspace,
             base_env=base,
             masker=ctx.secrets,
-            to_step_path=lambda path: to_workspace_path(path, self.root),
+            to_step_path=to_step,
             sink=ctx.sink,
-            contexts=ctx.contexts,
+            contexts=_container_contexts(ctx.contexts),
             builtins=ctx.builtins,
+            offline=ctx.offline,
             in_container=True,
         )
 
@@ -286,7 +312,9 @@ class DockerBackend:
             return self._failed(inst, started)
 
         try:
-            container = self._create(image, inst, base, layout.run_id)
+            container = self._create(
+                image, inst, base, layout.run_id, workspace, job_layout.dir if isolated else None
+            )
         except Exception as exc:  # noqa: BLE001 - the daemon refuses for many reasons
             for line in _create_failure(image, exc).report:
                 _note(config, line)
@@ -383,14 +411,33 @@ class DockerBackend:
             dockerfile=_expand(job.dockerfile, config),
         )
 
-    def _create(self, image: str, inst: JobInstance, base: dict[str, str], run_id: str) -> Any:
-        source = to_container_path(self.root.resolve())
+    def _create(
+        self,
+        image: str,
+        inst: JobInstance,
+        base: dict[str, str],
+        run_id: str,
+        workspace: Path | None = None,
+        job_dir: Path | None = None,
+    ) -> Any:
+        source = to_container_path((workspace or self.root).resolve())
+        volumes = {source: {"bind": CONTAINER_WORKSPACE, "mode": "rw"}}
+        if job_dir is not None:
+            # `--clean` only. The scratch directory holds the step scripts and
+            # the five state files, and it is the PARENT of the isolated
+            # workspace — so this is the outer of two nested binds and Docker
+            # resolves the deeper one for that subtree. Without it the
+            # container is handed a script path that does not exist in there.
+            volumes[to_container_path(job_dir.resolve())] = {
+                "bind": CONTAINER_JOB_DIR,
+                "mode": "rw",
+            }
         container = self.client.containers.create(
             image=image,
             command=KEEPALIVE_CMD,
             name=container_name(self.root, run_id, inst.key),
             working_dir=CONTAINER_WORKSPACE,
-            volumes={source: {"bind": CONTAINER_WORKSPACE, "mode": "rw"}},
+            volumes=volumes,
             environment=base,
             # None on Docker Desktop. Passing a host uid there breaks the
             # container instead of fixing ownership — risk #6.
@@ -402,6 +449,24 @@ class DockerBackend:
         )
         _track(container)
         return container
+
+
+def _container_contexts(contexts: Contexts | None) -> Contexts | None:
+    """`${{ github.workspace }}` as the STEP will see it, which is /workspace.
+
+    The expression is interpolated into a script that runs inside the
+    container, so answering it with a host path hands the step a directory that
+    does not exist in there. `$GITHUB_WORKSPACE` has always said `/workspace`;
+    a workflow using the two spellings interchangeably — and they are
+    interchangeable on GitHub — got two different answers.
+
+    A replaced dict rather than a mutated one, for the same reason
+    `runner._with_workspace` copies: `for_instance` shares the github dict
+    across every leg running in the pool.
+    """
+    if contexts is None:
+        return None
+    return replace(contexts, github={**contexts.github, "workspace": CONTAINER_WORKSPACE})
 
 
 def container_name(root: Path, run_id: str, job_key: str) -> str:

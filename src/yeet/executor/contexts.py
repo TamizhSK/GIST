@@ -120,8 +120,9 @@ def for_step(
     base_env: dict[str, str],
     step_outputs: dict[str, dict[str, str]],
     step_conclusions: dict[str, str],
+    action_inputs: dict[str, str] | None = None,
 ) -> Contexts | None:
-    """The job's contexts, plus the three that change on every step.
+    """The job's contexts, plus the four that change on every step.
 
     `env` is the *fully layered* environment the step is about to run with, not
     just the workflow's `env:` blocks. GitHub's `env` context is narrower, but
@@ -129,6 +130,12 @@ def for_step(
     `$FOO` inside the same step agree; feeding the real environment in is the
     only way to guarantee that, and it can only ever expose more than GitHub
     does, never less.
+
+    `action_inputs` is set only for a step INLINED FROM A COMPOSITE ACTION, and
+    only then may it replace the job's `inputs`: inside the action,
+    `${{ inputs.x }}` means the ACTION's input. A workflow step keeps the
+    workflow's — a `workflow_call` input is a different thing with the same
+    spelling, and quietly swapping them would be worse than either.
     """
     if job_ctx is None:
         return None
@@ -137,6 +144,7 @@ def for_step(
         env=dict(env),
         runner=runner_context(base_env),
         steps=steps_context(step_outputs, step_conclusions),
+        inputs=dict(action_inputs) if action_inputs is not None else job_ctx.inputs,
     )
 
 

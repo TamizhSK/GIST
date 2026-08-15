@@ -41,17 +41,27 @@ inlined as a probe script — see `actions/toolchain.py` for why checking is the
 only honest thing a local runner can offer here, and why it has to happen as a
 step inside the container rather than as a built-in on the host.
 
-`owner/repo@ref` still reaches `resolver.resolve()`, which only answers about
-LOCAL paths, so a remote composite action is reported as unresolvable even
-though `resolver.resolve_remote()` (A20) could fetch it. That is the next
-call site to wire, and it is deliberately not wired here: cloning from a
-`uses:` line reaches the network mid-run, which needs its own decision about
-caching and offline behaviour.
+`owner/repo@ref` now reaches `resolver.resolve_remote()` (A20), which was the
+eleventh finished-but-unreachable module here: written, unit-tested, and never
+called, so every third-party composite action in existence reported as "could
+not be resolved to a local action". Two things had to be true before wiring it
+was honest rather than merely possible.
+
+First, it could not fetch what W402 tells you to use. Its `git clone --depth 1
+--branch <ref>` cannot check out a commit SHA, so the pinned spelling failed
+100% of the time. It goes through `actions/fetch.py` now.
+
+Second, a `uses:` line that reaches the NETWORK mid-run needs a policy, not a
+default nobody chose. The one here: fetch on a cache miss and say so on the
+line it happens; cache by ref, forever for a SHA or an exact tag and for a day
+for a moving `@v4`; and `--offline` to refuse the network entirely and report a
+miss against the workflow line that caused it.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -84,6 +94,15 @@ class UsesPlan:
     builtin: str = ""
     inputs: dict[str, Any] = field(default_factory=dict)
     reason: str = ""
+    blocking: bool = False
+    """An UNSUPPORTED step that must FAIL rather than skip.
+
+    Skipped is green, and green has to mean "this would pass on GitHub". A
+    docker or node action is skipped-green because we made a considered
+    decision not to run it yet; an action we could not GET is a different
+    thing entirely — the workflow says to run it, GitHub would run it, and
+    calling that a pass is the same false green `--offline` was never meant to
+    buy. See `actions/toolchain.py` for the other half of this argument."""
 
 
 def bare_name(uses: str) -> str:
@@ -91,11 +110,22 @@ def bare_name(uses: str) -> str:
     return _REF.sub("", uses.strip())
 
 
-def plan_uses(step: Step, root: Path, bag: DiagnosticBag) -> UsesPlan:
+def plan_uses(
+    step: Step,
+    root: Path,
+    bag: DiagnosticBag,
+    *,
+    offline: bool = False,
+    on_fetch: Callable[[str], None] | None = None,
+) -> UsesPlan:
     """Decide what to do with one `uses:` step. Never raises.
 
     `bag` collects E313/E314/W319 from the resolver. The caller decides whether
     those block; here they are only recorded.
+
+    `on_fetch` is called with the `uses:` string just before a remote action is
+    downloaded, so the step's own log says the network was used and for what.
+    `offline` forbids that fetch; a cache hit still resolves normally.
     """
     uses = (step.uses or "").strip()
     if not uses:
@@ -131,12 +161,29 @@ def plan_uses(step: Step, root: Path, bag: DiagnosticBag) -> UsesPlan:
 
     action = resolver.resolve(uses, root, bag)
     if action is None:
+        # Not local. `owner/repo@ref` is fetched into the action cache and then
+        # resolved from there like any other directory on disk.
+        try:
+            action = resolver.resolve_remote(uses, bag, offline=offline, on_fetch=on_fetch)
+        except resolver.Offline as exc:
+            return UsesPlan(
+                kind=UNSUPPORTED,
+                blocking=True,
+                reason=(
+                    f"`{uses}` is not in the action cache and `--offline` was given "
+                    f"(looked in {exc}). Run once without `--offline` to fetch it."
+                ),
+            )
+    if action is None:
         return UsesPlan(
             kind=UNSUPPORTED,
-            reason=f"`{uses}` could not be resolved to a local action",
+            reason=f"`{uses}` could not be resolved to a local or remote action",
         )
 
     if action.kind != "composite":
+        # Now an accurate answer rather than "could not be resolved": we
+        # fetched it, we read its action.yml, and THIS is the part we cannot
+        # run yet. A user chasing C15/C16 can see which one they need.
         return UsesPlan(
             kind=UNSUPPORTED,
             reason=f"`{uses}` is a {action.kind} action — not supported yet "
@@ -144,4 +191,6 @@ def plan_uses(step: Step, root: Path, bag: DiagnosticBag) -> UsesPlan:
         )
 
     input_env = resolver.apply_inputs(action, dict(step.with_), bag)
-    return UsesPlan(kind=INLINE, steps=resolver.composite_steps(action, input_env))
+    return UsesPlan(
+        kind=INLINE, steps=resolver.composite_steps(action, input_env, dict(step.with_))
+    )

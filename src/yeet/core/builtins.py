@@ -42,6 +42,15 @@ class BuiltinContext:
     """The step's `with:` block, already interpolated."""
     emit: Callable[[str], None]
     """One log line, inside the step's own group."""
+    isolated: bool = False
+    """True when the workspace is a private empty directory rather than the
+    user's working tree — `yeet run --clean`.
+
+    A flag rather than a `workspace != root` comparison, because those two are
+    legitimately different directories in other arrangements and the question
+    being asked is about the RUN, not about two paths. It decides one thing:
+    whether `actions/checkout` FILLS the workspace, as on GitHub, or reports
+    that it is already the repository."""
     post: list[Callable[[], None]] = field(default_factory=list)
     """Callables the step loop runs when the JOB ends. `actions/cache` uses it:
     GitHub saves a cache at job end, and saving it at the `uses:` line would

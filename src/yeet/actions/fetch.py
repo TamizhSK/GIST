@@ -43,6 +43,10 @@ and only then — a machine with git never touches Docker for this."""
 
 DEFAULT_TIMEOUT_S = 300.0
 
+SOURCE_MOUNT = "/yeet-source"
+"""Where `source_mount` lands inside the git container. Read-only, and only
+present when a fetch is fed from a directory outside its own destination."""
+
 VIA_GIT = "git"
 VIA_DOCKER = "docker"
 
@@ -80,6 +84,17 @@ if [ -n "$YEET_REF" ]; then
 else
   git fetch $depth --no-tags origin HEAD
   git checkout -q FETCH_HEAD
+fi
+if [ -n "$YEET_SUBMODULES" ]; then
+  # Failure here is reported, not fatal: a submodule usually points at a second
+  # repository the user may have no credentials for, and losing the whole
+  # checkout over an optional one would be the wrong trade.
+  if [ "$YEET_SUBMODULES" = "recursive" ]; then
+    git submodule update --init --recursive $depth || \
+      echo "submodules could not be initialised" >&2
+  else
+    git submodule update --init $depth || echo "submodules could not be initialised" >&2
+  fi
 fi
 # The token, if there was one, is in the remote URL and `git init` just wrote
 # it into .git/config inside the user's working tree. Put the clean URL back
@@ -157,7 +172,9 @@ def fetch(
     source: str,
     ref: str = "",
     depth: int = 1,
+    submodules: str = "",
     clean_source: str = "",
+    source_mount: Path | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     image: str = GIT_IMAGE,
 ) -> FetchResult:
@@ -167,6 +184,12 @@ def fetch(
     `dest_rel` is relative to it — so a Docker fallback needs exactly one
     volume, and `source` may itself be `mount` (checking the current repo out
     into a subdirectory of itself, which is what `path:` is for).
+
+    `source_mount` is the second volume, and it is needed exactly once: an
+    isolated workspace (`yeet run --clean`) is fed from the project root, which
+    is somewhere else entirely on the host. Mounted read-only — this is the
+    user's working tree, and nothing here has any business writing to it. Host
+    git needs none of this and ignores it.
 
     `clean_source` is the URL to leave in `.git/config` when `source` carries a
     token. Empty means they are the same and nothing is rewritten.
@@ -178,6 +201,7 @@ def fetch(
         "YEET_SRC_CLEAN": clean_source,
         "YEET_REF": ref,
         "YEET_DEPTH": str(max(depth, 0)),
+        "YEET_SUBMODULES": submodules,
     }
 
     shell = _host_sh()
@@ -199,10 +223,20 @@ def fetch(
         env["YEET_SRC"] = "/yeet"
     elif env["YEET_SRC"].startswith(mount_str + "/"):
         env["YEET_SRC"] = _posix_join("/yeet", env["YEET_SRC"][len(mount_str) + 1 :])
+    elif source_mount is not None:
+        # Same re-expression against the second volume. Checked after `mount`
+        # so a source that lives under both still resolves to the writable one.
+        src_str = str(source_mount)
+        if env["YEET_SRC"] == src_str:
+            env["YEET_SRC"] = SOURCE_MOUNT
+        elif env["YEET_SRC"].startswith(src_str + "/"):
+            env["YEET_SRC"] = _posix_join(SOURCE_MOUNT, env["YEET_SRC"][len(src_str) + 1 :])
     # `-i` (not `-t`): git must never get a TTY to prompt on, and a TTY would
     # also merge stderr into stdout so the commit SHA on the last line stops
     # being the last line.
     argv = ["docker", "run", "--rm", "-i", "-v", f"{mount}:/yeet", "-w", "/yeet"]
+    if source_mount is not None:
+        argv += ["-v", f"{source_mount}:{SOURCE_MOUNT}:ro"]
     for key, value in env.items():
         argv += ["-e", f"{key}={value}"]
     argv += ["-e", "HOME=/tmp"]

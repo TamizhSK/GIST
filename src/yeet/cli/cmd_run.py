@@ -37,6 +37,7 @@ from yeet.executor.docker_backend import DockerBackend
 from yeet.executor.images import ImageKind, ImageResolutionError, resolve_image
 from yeet.executor.local_backend import LocalBackend
 from yeet.executor.runner import RunOptions, run_plan
+from yeet.executor.uses import CHECKOUT, bare_name
 from yeet.executor.workspace import create
 from yeet.expressions.contexts import Contexts, build_github_context
 from yeet.planner.plan import ExecutionPlan, build_plan
@@ -65,6 +66,10 @@ def run(
     clean: Annotated[
         bool,
         typer.Option("--clean", help="Empty workspace; `actions/checkout` fills it, as on GitHub."),
+    ] = False,
+    offline: Annotated[
+        bool,
+        typer.Option("--offline", help="Never fetch an action; use the cache only."),
     ] = False,
 ) -> None:
     """Analyze -> validate -> plan -> execute -> report.
@@ -121,6 +126,9 @@ def run(
     # id before the first event is emitted.
     layout = create(root)
 
+    if not clean:
+        _warn_no_checkout(workflow)
+
     backend = _backend(root, project, workflow)
     # `make_console` picks the live tree for a real terminal, plain lines
     # otherwise. Either way it sits beside `RunStore` in a `FanOut`, which is
@@ -143,6 +151,9 @@ def run(
         # those two from importing each other. See `core/builtins.py`.
         builtins=run_builtin,
         isolated=clean,
+        # `YEET_OFFLINE` as well as the flag: a CI image or an air-gapped box
+        # wants this on for every run without editing anybody's command line.
+        offline=offline or _env_flag("YEET_OFFLINE"),
         sink=FanOut(sinks=[console_sink, RunStore(layout.root, layout.run_id)]),
         contexts=contexts,
         layout=layout,
@@ -169,6 +180,42 @@ def run(
         job_count=len(result.jobs),
     )
     raise typer.Exit(result.exit_code)
+
+
+def _env_flag(name: str) -> bool:
+    """`YEET_OFFLINE=1`. Set-but-empty is not set — an exported empty variable
+    is how a shell script says "no", not "yes"."""
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _warn_no_checkout(workflow: Workflow) -> None:
+    """Say when a run is only working because of the bind mount.
+
+    On GitHub a job starts with an EMPTY workspace, so a workflow with no
+    `actions/checkout` anywhere cannot see a single file of the repository and
+    fails on its first real command. Here the working tree is mounted, so the
+    same workflow passes — and passes for a reason that will not exist in CI.
+
+    Once per run, and only in the default mode: `--clean` reproduces GitHub's
+    empty workspace, where this stops being a warning and becomes the failure
+    it already is upstream. Not a lint (layer 4) on purpose — a job that only
+    downloads an artifact and deploys it needs no checkout, and static analysis
+    cannot tell that job from a broken one. What CAN be said precisely is that
+    the whole workflow has none, which is nearly always an oversight.
+    """
+    for job in workflow.jobs.values():
+        for step in job.steps:
+            if step.uses and bare_name(step.uses) == CHECKOUT:
+                return
+    if not any(job.steps for job in workflow.jobs.values()):
+        return
+    typer.secho(
+        "[!] no `actions/checkout` step in this workflow. It works here because your "
+        "working tree is mounted; on GitHub the workspace starts empty. "
+        "Try `yeet run --clean` to run it the way GitHub would.",
+        fg=typer.colors.YELLOW,
+        err=True,
+    )
 
 
 # --- stages ------------------------------------------------------------------

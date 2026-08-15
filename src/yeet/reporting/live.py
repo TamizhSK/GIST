@@ -392,6 +392,10 @@ class LiveRunConsole:
             # the plain line if the window is too narrow to frame cleanly.
             panel=True,
             width=self._console.width,
+            # THE stream this is about to be written to. A real terminal
+            # establishes a cursor, not an encoding: a Windows console under
+            # `chcp 1252` is interactive and still cannot take a box character.
+            stream=self.out,
         )
         try:
             self.out.write(summary + "\n")

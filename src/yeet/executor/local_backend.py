@@ -113,10 +113,12 @@ class LocalBackend:
         # inheriting HOME, SHELL and the user's toolchain is the intent; and
         # `Popen(env=...)` resolves argv[0] through the PATH *in that env*, so
         # dropping it means `bash` itself cannot be found.
+        workspace = ctx.workspace or self.root
+
         base = dict(os.environ)
         base.update(
             env_mod.base_env(
-                workspace=str(self.root),
+                workspace=str(workspace),
                 run_id=layout.run_id,
                 job_key=inst.key,
                 event=ctx.event,
@@ -130,14 +132,16 @@ class LocalBackend:
             job_key=inst.key,
             layout=job_layout,
             root=self.root,
+            workspace=workspace,
             base_env=base,
             masker=ctx.secrets,
             to_step_path=str,
             sink=ctx.sink,
             contexts=ctx.contexts,
             builtins=ctx.builtins,
+            offline=ctx.offline,
             in_container=False,
         )
 
-        results = run_steps(config, LocalExec(self.root))
+        results = run_steps(config, LocalExec(workspace))
         return build_job_result(config, inst, results, started)

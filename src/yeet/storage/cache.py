@@ -83,22 +83,31 @@ def save_cache(key: str, paths: list[Path], *, base: Path) -> Path | None:
     return tar_path
 
 
-def restore_cache(key: str, restore_keys: list[str] | None, *, dest: Path) -> CacheHit | None:
+def restore_cache(
+    key: str, restore_keys: list[str] | None, *, dest: Path, extract: bool = True
+) -> CacheHit | None:
     """Exact key first, then each restore key as a PREFIX, newest match wins.
 
     Returns the hit so the caller can report `cache-hit: true|false` — an exact
     hit and a prefix hit are different answers and workflows branch on which.
+
+    `extract=False` is `actions/cache`'s `lookup-only`: answer whether the
+    entry exists and leave the workspace alone. A workflow uses it to skip an
+    expensive build it has already published, and unpacking anyway would be the
+    difference between a warm workspace and a cold one.
     """
     exact = entry_path(key)
     if exact.is_file():
-        _extract(exact, dest)
+        if extract:
+            _extract(exact, dest)
         return CacheHit(key=key, path=exact, exact=True)
 
     for prefix in restore_keys or []:
         match = _newest_with_prefix(prefix)
         if match is not None:
             tar_path, matched_key = match
-            _extract(tar_path, dest)
+            if extract:
+                _extract(tar_path, dest)
             return CacheHit(key=matched_key, path=tar_path, exact=False)
     return None
 

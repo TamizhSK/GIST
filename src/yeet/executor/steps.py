@@ -45,6 +45,7 @@ from yeet.executor.commands import (
     parse_workflow_command,
 )
 from yeet.executor.interpolate import DEGRADED_NOTE, Degradation, expand, truthy
+from yeet.executor.paths import CONTAINER_JOB_DIR, CONTAINER_WORKSPACE
 from yeet.executor.script import script_suffix, shell_argv, write_step_script
 from yeet.executor.workspace import JobLayout
 from yeet.expressions.contexts import Contexts
@@ -104,11 +105,23 @@ class StepLoopConfig:
     job_key: str
     layout: JobLayout
     root: Path
+    """The PROJECT root — where `.yeet/artifacts/` and `.yeet/runs/` live. Not
+    necessarily where the steps run: see `workspace`."""
     base_env: dict[str, str]
     masker: Masker
     to_step_path: Callable[[Path], str]
     """Host path -> the path the step will see. `str` on the host,
     `paths.to_workspace_path` inside a container."""
+    workspace: Path | None = None
+    """Where the steps actually run, on the host side of the mount. None means
+    "the project root", which is every run that is not `--clean`.
+
+    Optional so the many tests that build a StepLoopConfig by hand are
+    unaffected; read it as `config.job_workspace`, never directly."""
+    offline: bool = False
+    """`yeet run --offline` — a `uses:` may be served from the action cache but
+    may not fetch. Off by default: a remote action that has never been fetched
+    cannot run any other way."""
     sink: LogSink | None = None
     contexts: Contexts | None = None
     in_container: bool = True
@@ -124,6 +137,16 @@ class StepLoopConfig:
     """`{step.id: "success"|"failure"|"skipped"}` — the other half of the
     `steps` context. GitHub's words, not the console's: workflows in the wild
     are written against `steps.x.conclusion == 'success'`."""
+
+    @property
+    def job_workspace(self) -> Path:
+        """Where the steps run. The root unless this job was isolated."""
+        return self.workspace or self.root
+
+    @property
+    def isolated(self) -> bool:
+        """True when the workspace is NOT the user's working tree."""
+        return self.job_workspace.resolve() != self.root.resolve()
 
 
 def run_steps(config: StepLoopConfig, executor: StepExec) -> list[StepResult]:
@@ -228,7 +251,20 @@ def _run_uses(
     from yeet.executor import uses as uses_mod
 
     bag = DiagnosticBag()
-    plan = uses_mod.plan_uses(step, config.root, bag)
+    # A local `uses: ./x` resolves against the WORKSPACE, as it does on GitHub —
+    # under `--clean` that is the tree `actions/checkout` just placed, and a
+    # workflow that never checked out is meant to fail here rather than reach
+    # into a working tree the job was never given.
+    plan = uses_mod.plan_uses(
+        step,
+        config.job_workspace,
+        bag,
+        offline=config.offline,
+        # Announced on the STEP's own line rather than once at startup: the
+        # user needs to know which `uses:` went to the network, and a run that
+        # pauses for ten seconds should say what it is waiting for.
+        on_fetch=lambda uses: _emit(config, name, META, f"fetching {uses} into the action cache"),
+    )
 
     for diagnostic in bag.items:
         _emit(config, name, META, f"{diagnostic.code}: {diagnostic.message}")
@@ -246,6 +282,19 @@ def _run_uses(
 
     if plan.kind == uses_mod.BUILTIN:
         return _run_builtin(config, step, name, plan, post, contexts)
+
+    if plan.blocking:
+        # Not skipped: we could not GET the action. The workflow says to run
+        # it and GitHub would, so a green run here would be a lie of exactly
+        # the kind `continue-on-error` exists to make deliberate.
+        # Start/end pair, as `_lifecycle_skip` does: the live tree creates a
+        # node on the first event it sees and resolves it on STEP_END, so an
+        # end without a start leaves a step that never stops spinning.
+        _step_started(config, name)
+        _emit(config, name, META, plan.reason)
+        _conclude(config, step, Status.FAILURE)
+        _step_ended(config, name, Status.FAILURE, 0.0, 1)
+        return StepResult(step_name=name, status=Status.FAILURE, exit_code=1)
 
     _emit(config, name, META, f"skipped (not the vibe): {plan.reason}")
     _conclude(config, step, Status.SKIPPED)
@@ -285,10 +334,14 @@ def _run_builtin(
     ctx = BuiltinContext(
         root=config.root,
         run_id=config.layout.run_id,
-        # The project root IS the workspace: it is what the backend
-        # bind-mounts at /workspace, so a file the container just wrote is
-        # visible here at the same relative path.
-        workspace=config.root,
+        # The host side of whatever the backend bind-mounted at /workspace, so
+        # a file the container just wrote is visible here at the same relative
+        # path. Usually the project root; under `--clean` this job's own
+        # directory, and passing the root there would have had
+        # `upload-artifact` collect files from the working tree rather than
+        # from what the job actually built.
+        workspace=config.job_workspace,
+        isolated=config.isolated,
         inputs=_expanded_with(config, step, contexts),
         emit=lambda line: _emit(config, name, STDOUT, line),
         post=post,
@@ -327,11 +380,47 @@ def _expanded_with(
     under the single literal name `out-${{ matrix.leg }}` and shared one cache
     key: the second leg overwrote the first, and the log said so in a string
     the user could read and still not notice.
+
+    Then translated back out of the CONTAINER's filesystem, because a built-in
+    runs on the host. A real action computes its paths from `${{ runner.temp }}`
+    or `$GITHUB_WORKSPACE`, both of which are `/workspace/...` inside the job —
+    a path that exists nowhere on this machine. `actions/upload-pages-artifact`
+    hands `upload-artifact` exactly such a path, and the result was "no files
+    matched" for a file that had just been written successfully.
     """
-    return {
+    expanded = {
         key: expand(value, contexts, config.degraded) if isinstance(value, str) else value
         for key, value in step.with_.items()
     }
+    if not config.in_container:
+        return expanded
+    return {
+        key: _to_host_path(value, config) if isinstance(value, str) else value
+        for key, value in expanded.items()
+    }
+
+
+def _to_host_path(value: str, config: StepLoopConfig) -> str:
+    """`/workspace/x` -> `<workspace>/x`, line by line. Anything else untouched.
+
+    Line by line because `path:` is a multi-line string in every real workflow
+    that uses it, and only some of those lines are absolute container paths.
+    """
+    if CONTAINER_WORKSPACE not in value and CONTAINER_JOB_DIR not in value:
+        return value
+    mounts = ((CONTAINER_WORKSPACE, config.job_workspace), (CONTAINER_JOB_DIR, config.layout.dir))
+    out: list[str] = []
+    for line in value.splitlines():
+        text = line.strip()
+        for mount, host in mounts:
+            if text == mount:
+                text = str(host)
+                break
+            if text.startswith(mount + "/"):
+                text = str(host / text[len(mount) + 1 :])
+                break
+        out.append(text)
+    return "\n".join(out)
 
 
 def _conclude(config: StepLoopConfig, step: Step, status: Status) -> None:
@@ -357,6 +446,7 @@ def _step_contexts(
         base_env=config.base_env,
         step_outputs=config.step_outputs,
         step_conclusions=config.step_conclusions,
+        action_inputs=step.action_inputs,
     )
     env = _layered_env(config, step, exported, pre)
     full = ctx_mod.for_step(
@@ -365,6 +455,7 @@ def _step_contexts(
         base_env=config.base_env,
         step_outputs=config.step_outputs,
         step_conclusions=config.step_conclusions,
+        action_inputs=step.action_inputs,
     )
     return full, env
 
@@ -389,6 +480,9 @@ def build_job_result(
     # `steps.<id>.outputs.<name>`, so it has to be expanded against the context
     # as it stands AFTER the last step — not against the run-wide one, where
     # `steps` is permanently empty and every declared output was "".
+    # No `action_inputs` here: a job's `outputs:` block is the WORKFLOW's, so
+    # `${{ inputs.x }}` in it means the workflow's input, never some inlined
+    # action's.
     final = ctx_mod.for_step(
         config.contexts,
         env=config.base_env,

@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from yeet.core.builtins import BuiltinRunner
@@ -69,6 +69,10 @@ class RunOptions:
     """`yeet run --clean`: give every job an empty workspace and make
     `actions/checkout` fill it, the way GitHub does. See
     `workspace.JobLayout.isolated_workspace`."""
+    offline: bool = False
+    """`yeet run --offline`: a `uses: owner/repo@ref` may be served from the
+    action cache but must not fetch. For a plane, an air-gapped machine, or a
+    run that must not depend on github.com being up."""
     run_id: str = ""
     layout: RunLayout | None = None
 
@@ -149,6 +153,7 @@ def _run_wave(
         if options.isolated:
             job_workspace = layout.job(inst.key).isolated_workspace
             job_workspace.mkdir(parents=True, exist_ok=True)
+            contexts = _with_workspace(contexts, job_workspace)
 
         ctx = JobContext(
             workspace=job_workspace,
@@ -160,6 +165,7 @@ def _run_wave(
             contexts=contexts,
             builtins=options.builtins,
             run_id=layout.run_id,
+            offline=options.offline,
         )
         _job_started(options, inst.key)
         futures[pool.submit(backend.run_job, inst, ctx)] = inst
@@ -181,6 +187,23 @@ def _align_github_context(options: RunOptions, layout: RunLayout) -> None:
         return
     options.contexts.github["run_id"] = layout.run_id
     options.contexts.github.setdefault("workspace", str(options.root))
+
+
+def _with_workspace(contexts: Contexts | None, workspace: Path) -> Contexts | None:
+    """`${{ github.workspace }}` for one isolated job.
+
+    A REPLACED github dict, not a mutated one: `for_instance` builds its
+    snapshot with `dataclasses.replace`, which copies shallowly — so the dict
+    is shared with every other leg running in the pool right now, and writing
+    into it would give them all whichever workspace was assigned last. The same
+    hazard `_group_depth` had, and the reason `matrix` is snapshotted at all.
+
+    `$GITHUB_WORKSPACE` comes from the backend's `base_env`, which reads
+    `ctx.workspace`. Two spellings of one fact must not disagree inside a step.
+    """
+    if contexts is None:
+        return None
+    return replace(contexts, github={**contexts.github, "workspace": str(workspace)})
 
 
 def _job_env(options: RunOptions, contexts: Contexts | None) -> dict[str, str]:

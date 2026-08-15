@@ -142,9 +142,11 @@ FileNotFoundError(2, ...))`.
 - **Remote composite actions.** `owner/repo@ref` reports as unresolvable even
   though `resolve_remote` (A20) could fetch it. Deliberate: cloning from a
   `uses:` line reaches the network mid-run and needs its own decision about
-  caching and offline behaviour.
+  caching and offline behaviour. *(Done in session 11.)*
 - **Windows** is verified by CI only. The 3.10 leg is new there, and the
-  encoding-gated panel glyphs have never run on a cp1252 console.
+  encoding-gated panel glyphs have never run on a cp1252 console. *(Session 11
+  added the streams and the `windows-console` job — and found that the glyphs
+  were gated on the wrong stream.)*
 - **A git-less install** works via the GitHub tarball, but only for a GitHub
   URL. A tagged release with a wheel would make "download a file" a first-class
   path rather than a fallback.
@@ -163,3 +165,139 @@ checkout of a tag into `path:` via host git AND via a git container with git
 removed from PATH, a toolchain mismatch failing loudly, DOCKER_HOST pointed at
 a dead socket (exit 3, two lines, no traceback), and a full install from an
 empty `$HOME` on a real pty.
+
+
+# session-11 — what `uses:` actually does
+
+The goal this session was fidelity, stated plainly: a `uses:` line should do
+locally what it does on GitHub. It did not, in four ways, and every one of them
+was GREEN here and RED there — the direction a local runner must never get
+wrong, because a false green ships.
+
+## `--clean` was inert
+
+`runner.py` built the isolated per-job workspace, handed it to
+`JobContext.workspace`, and **neither backend ever read the field**. Both used
+their own `self.root` for the bind mount, for `GITHUB_WORKSPACE` and for the
+step loop. So `yeet run --clean` created an empty directory, ignored it, and
+ran against the working tree exactly as before. The eleventh instance in this
+repo of a finished thing with no call site, and the one that mattered most,
+because fidelity is the flag's only purpose.
+
+Reading it took a second mount. The step scripts and the five state files live
+in `.yeet/tmp/<run>/<job>/`, which is outside an isolated workspace, so the job
+scratch directory is now bound at `/yeet-run` and `to_step_path` points into
+it. `storage/builtin.py` gets the real workspace too — otherwise
+`upload-artifact` under `--clean` collects from the working tree rather than
+from what the job just built.
+
+Two more disagreements fell out of it. `${{ github.workspace }}` answered with
+a HOST path inside a container while `$GITHUB_WORKSPACE` said `/workspace`;
+they are interchangeable on GitHub and are now interchangeable here. And the
+per-job workspace had to be written into a COPY of the github context —
+`for_instance` uses `dataclasses.replace`, which copies shallowly, so the dict
+is shared with every leg in the pool.
+
+Verified by hand: a repo with one committed file and one uncommitted file. A
+normal run sees both. `--clean` sees only the committed one, which is exactly
+what GitHub would do.
+
+## `actions/checkout` announced the opposite of what it did
+
+Its default path printed "the workspace is already this repository" — true
+under the bind mount, and a flat lie over an empty `--clean` workspace, after
+which every step ran against nothing. It now fills the workspace from the
+project root, which already has the objects, so the common case costs no
+network. `fetch-depth: 0` is honoured (a shallow tree breaks `git describe
+--tags` with an error that never mentions the checkout), and `outputs.commit`
+carries the SHA instead of dropping it.
+
+## The other three built-ins ignored the inputs that decide pass/fail
+
+`if-no-files-found: error`, `fail-on-cache-miss`, `lookup-only`, v4's
+`overwrite`, and `download-artifact` with no `name:` — which on v4 means EVERY
+artifact and here meant one called `"artifact"` that usually did not exist, so
+the step went green and the job failed later for an unrelated-looking reason.
+All read now, with `cache-primary-key` / `cache-matched-key` / `download-path`
+alongside.
+
+## `owner/repo@ref` never resolved
+
+`resolve_remote` had been written, tested, and never called. Wiring it needed
+two things first.
+
+It could not fetch the ref W402 tells you to use: `git clone --depth 1 --branch
+<ref>` cannot check out a commit SHA, so the PINNED spelling failed 100% of the
+time. It goes through `actions/fetch.py` now — init + fetch + checkout, the one
+sequence that treats a branch, a tag and a SHA identically.
+
+And a `uses:` line reaching the network mid-run needed a stated policy rather
+than a default nobody chose. Fetch on a cache miss, announced on the step's own
+line; cache under `cache_dir()/actions/<owner>/<repo>/<ref-slug>`, forever for
+a SHA or an exact tag and for 24h for a moving `@v4`; `--offline` (or
+`YEET_OFFLINE=1`) to refuse the network and report the miss against the
+workflow line that caused it; `yeet prune --actions` to empty it. Which refs
+move now lives in `core/refs.py` so the lint and the cache cannot drift apart —
+they are at different tiers and a copied list could not have been kept honest.
+
+Running a real one found three more things, all of which are why this is worth
+doing against real actions rather than fixtures:
+
+* **`${{ inputs.x }}` inside a composite resolved to `""`.** `$INPUT_X` in the
+  env always worked, so the shell form was fine and the expression form was a
+  silent empty string — two spellings of one value, one of them a lie.
+* **`uses: ./x` inside a composite** resolved against the workspace. For a
+  cached action that is a different repository entirely.
+* **A built-in got CONTAINER paths.** A real action computes from
+  `${{ runner.temp }}`, hands `/workspace/...` to `upload-artifact`, and the
+  built-in runs on the host — so it reported "no files matched" for a file that
+  had just been written.
+
+`actions/upload-pages-artifact` pinned to a 40-hex SHA now runs end to end:
+fetched, inlined, its per-OS `if:` conditions evaluated, its tar written, and
+its own nested `uses: actions/upload-artifact@v4` served by our built-in.
+
+## cp1252, and a bug that was hiding behind the note
+
+`undone.md` said Windows was "verified by CI only" and that the panel glyphs
+had never run on a cp1252 console. Writing the test that says so found the bug:
+`format_summary` chose its box characters by asking **`sys.stdout`** while both
+renderers write to **`self.out`**. On a UTF-8 console piped into a cp1252 file
+it asked the console, got the box, and raised writing it to the file. The
+encoding gate was real and pointed at the wrong stream.
+
+`tests/unit/test_console_encoding.py` writes to real cp1252 and cp437 streams
+with `errors="strict"`, and drives the CLI through subprocesses with
+`PYTHONIOENCODING=cp1252:strict`. That is not a simulation: it is the same
+`TextIOWrapper` encoder Windows uses, so it is evidence anywhere it runs.
+
+## Still open
+
+- **Docker and node actions (C15/C16).** Now fetched and READ, so the skip
+  names which kind it is instead of claiming the action could not be resolved.
+  Running them is the next real step, and `runs.using: docker` is the closer of
+  the two — the Docker plumbing is all here.
+- **`artifact-url` is not emitted** by `upload-artifact`. There is no service
+  and no URL that would resolve, and a plausible-looking dead link is worse
+  than a missing field.
+- **The Windows CONSOLE** is now exercised by the `windows-console` CI job
+  (redirected output under `chcp 1252`, plus `PYTHONLEGACYWINDOWSSTDIO`), which
+  is the part no Mac can reach. What nothing automated answers is whether a
+  given console FONT has a glyph for a character it can encode.
+- **A git-less install**, **`docs/` overlap**, and **the daemon dying mid-run**
+  are unchanged from session 10.
+
+## Verification
+
+    make check        920 passed, six gates green
+    pytest -m docker  18 passed against a live daemon
+
+By hand, against a real repository and a real marketplace action:
+
+* `yeet run` — unchanged, which was the regression that mattered most.
+* `yeet run --clean` — empty workspace, checkout fills it, uncommitted files
+  correctly absent, both spellings of the workspace agreeing.
+* `uses: actions/upload-pages-artifact@56afc609...` (a 40-hex SHA) — fetched,
+  inlined, green. Re-run: cache hit, no network. `--offline` on a cold cache:
+  one clear line naming the cache path.
+* A composite calling `./nested`, and `${{ inputs.path }}` resolving.

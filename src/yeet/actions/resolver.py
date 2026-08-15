@@ -27,8 +27,11 @@ W319 — `with:` supplies an input the action.yml doesn't declare (apply_inputs)
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
-import subprocess
+import shutil
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,8 +40,10 @@ from typing import Any
 from ruamel.yaml import YAML
 from ruamel.yaml.error import MarkedYAMLError
 
+from yeet.core.config import cache_dir
 from yeet.core.diagnostics import Diagnostic, DiagnosticBag, Position, Severity
 from yeet.core.ir import Step
+from yeet.core.refs import is_moving
 
 # GitHub's rule (mirrors executor/env.py `_INPUT_UNSAFE`, which tier 2 may
 # not import): `with: {node-version: 20}` -> `INPUT_NODE_VERSION=20`.
@@ -49,10 +54,33 @@ _REMOTE_RE = re.compile(r"^(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)@
 contain anything (a branch with slashes is fine); the owner/repo parts are
 loose but slug-ish so a URL or a bare word can't sneak through as remote."""
 
-REMOTE_CACHE_ROOT = Path.home() / ".yeet" / "actions"
+REMOTE_CACHE_ROOT = cache_dir() / "actions"
+"""`platformdirs`, not `~/.yeet/actions`. Two reasons: `cache_dir()` is already
+the shallow, per-platform location this project uses for the tarball cache — and
+its docstring is where the Windows path-length warning lives — and a project of
+the user's own has a `.yeet/actions/` for LOCAL actions, so the old spelling put
+two unrelated things one character apart."""
+
 _GITHUB_CLONE_URL = "https://github.com/{owner}/{repo}.git"
 
+DEFAULT_TTL_S = 24 * 60 * 60
+"""How long a MOVING ref may be served from cache before it is fetched again.
+
+A SHA or an exact tag is never re-fetched — it cannot have changed. `@v4` and
+`@main` can, and do: a cache that held them forever would quietly pin a
+workflow to whatever happened to land first, which is the opposite of what
+someone writing `@main` asked for. `YEET_ACTION_TTL` (seconds, 0 disables the
+re-fetch) is the override."""
+
+_REF_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
 GitClone = Callable[[str, str, Path], bool]  # (url, ref, dest)
+
+
+class Offline(Exception):
+    """The cache missed and the network is not allowed. Carries no message of
+    its own: the caller has the `uses:` string and the cache path, which is
+    what the user needs to see."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,32 +190,56 @@ def resolve_remote(
     *,
     cache_root: Path | None = None,
     git_clone: GitClone | None = None,
+    offline: bool = False,
+    on_fetch: Callable[[str], None] | None = None,
 ) -> ResolvedAction | None:
-    """`owner/repo@ref` -> shallow-clone into the cache, then resolve locally.
+    """`owner/repo@ref` -> fetch into the cache, then resolve it locally.
 
-    Cached by ref: `~/.yeet/actions/<owner>/<repo>/<ref>/`. Once a ref is
-    cached it is never re-fetched — refs are immutable (tags and SHAs), and a
-    moving `@main` caching forever is the W402 lint's whole complaint.
+    Cached at `<cache_dir>/actions/<owner>/<repo>/<ref-slug>/`, and the cache is
+    the whole design here. A `uses:` line reaching the network in the middle of
+    a run is a real cost — it is slow, it fails on a plane, and it makes a run
+    depend on github.com being up — so it happens once per ref and is announced
+    every time through `on_fetch`. Silence would be the wrong default for
+    something that leaves the machine.
+
+    HOW LONG A CACHE ENTRY LIVES depends on what the ref is, because that is
+    what decides whether it CAN be wrong. A SHA or an exact tag is immutable
+    and is never fetched twice. `@v4` and `@main` are re-pointed by their
+    authors — that is W402's entire complaint — so they are refreshed after
+    `DEFAULT_TTL_S`. Serving a months-old `@main` forever would silently pin a
+    workflow to whatever landed first, which is not what `@main` asked for.
+
+    `offline=True` never touches the network: a hit is served as usual and a
+    miss raises `Offline` for the caller to report against the workflow line.
 
     Returns None when the uses isn't the `owner/repo@ref` shape (not an error:
     docker:// and bare words are someone else's concern). A ref that FAILS to
-    clone is E313 — the uses can't be satisfied, full stop.
+    fetch is E313 — the uses can't be satisfied, full stop.
     """
     parsed = _parse_remote(uses)
     if parsed is None:
         return None
     owner, repo, ref = parsed
 
-    dest = (cache_root or REMOTE_CACHE_ROOT) / owner / repo / ref
-    if not dest.is_dir():
+    dest = (cache_root or REMOTE_CACHE_ROOT) / owner / repo / _ref_slug(ref)
+    if _needs_fetch(dest, ref):
+        if offline:
+            raise Offline(str(dest))
+        if on_fetch is not None:
+            on_fetch(uses)
+        # Replaced, not fetched into: a half-written entry from an interrupted
+        # run would otherwise be indistinguishable from a complete one, and
+        # every later run would resolve against the wreckage.
+        shutil.rmtree(dest, ignore_errors=True)
         clone = git_clone or _git_clone
         ok = clone(_GITHUB_CLONE_URL.format(owner=owner, repo=repo), ref, dest)
         if not ok:
+            shutil.rmtree(dest, ignore_errors=True)
             bag.add(
                 Diagnostic(
                     code="YEET-E313",
                     severity=Severity.ERROR,
-                    message=f"could not clone `{uses}` into the action cache",
+                    message=f"could not fetch `{uses}` into the action cache",
                     file=dest,
                     pos=Position.unknown(),
                     help="check the repo and ref spellings, and that you're online",
@@ -196,6 +248,71 @@ def resolve_remote(
             return None
 
     return resolve(str(dest), dest, bag)
+
+
+def prune_actions(cache_root: Path | None = None) -> int:
+    """Empty the fetched-action cache. Returns how many entries went.
+
+    Counts `<owner>/<repo>/<ref>` directories rather than files, because that
+    is the unit a user thinks in — one number per `uses:` line they will have
+    to fetch again.
+    """
+    root = cache_root or REMOTE_CACHE_ROOT
+    if not root.is_dir():
+        return 0
+    count = sum(1 for owner in root.iterdir() if owner.is_dir() for _ in _refs_under(owner))
+    shutil.rmtree(root, ignore_errors=True)
+    return count
+
+
+def _refs_under(owner: Path) -> list[Path]:
+    return [ref for repo in owner.iterdir() if repo.is_dir() for ref in repo.iterdir()]
+
+
+def _needs_fetch(dest: Path, ref: str) -> bool:
+    """Is the cached copy missing, or old enough that it might be wrong?"""
+    if not dest.is_dir():
+        return True
+    if not is_moving(ref):
+        return False
+    ttl = _ttl_s()
+    if ttl <= 0:
+        return False
+    try:
+        age = time.time() - dest.stat().st_mtime
+    except OSError:
+        return True
+    return age > ttl
+
+
+def _ttl_s() -> int:
+    """`YEET_ACTION_TTL` in seconds. Junk is not an error — it is the default.
+
+    A typo'd environment variable must not stop a run: the failure mode of
+    guessing wrong here is one extra fetch, and the failure mode of raising is
+    a workflow that cannot run at all.
+    """
+    raw = os.environ.get("YEET_ACTION_TTL", "")
+    if not raw.strip():
+        return DEFAULT_TTL_S
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return DEFAULT_TTL_S
+
+
+def _ref_slug(ref: str) -> str:
+    """A ref as ONE path segment, uniquely.
+
+    `feature/x` is a legal branch and `<owner>/<repo>/feature/x` would nest it
+    a level deeper than the cache expects — which also means a branch named
+    `feature` and a branch named `feature/x` fight over the same name, one as a
+    file and one as a directory. Flattening alone would collide `a/b` with
+    `a-b`, so the readable part is kept for whoever goes looking in the cache
+    and a hash of the REAL ref makes it unambiguous.
+    """
+    flat = _REF_UNSAFE.sub("-", ref).strip("-.")[:40] or "ref"
+    return f"{flat}-{hashlib.sha256(ref.encode('utf-8')).hexdigest()[:8]}"
 
 
 def _parse_remote(uses: str) -> tuple[str, str, str] | None:
@@ -212,17 +329,21 @@ def _parse_remote(uses: str) -> tuple[str, str, str] | None:
 
 
 def _git_clone(url: str, ref: str, dest: Path) -> bool:
-    """Shallow clone, ref-checkout. Never raises; report failure as E313."""
-    try:
-        result = subprocess.run(
-            ["git", "clone", "--depth", "1", "--branch", ref, url, str(dest)],
-            capture_output=True,
-            timeout=120,
-            check=False,
-        )
-        return result.returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
+    """Put `url` at `ref` in `dest`. Never raises; failure is reported as E313.
+
+    Through `actions/fetch.py` rather than `git clone --depth 1 --branch <ref>`,
+    which is what this was and which COULD NOT CHECK OUT A SHA: `--branch` takes
+    a branch or a tag, so pinning an action the way W402 tells you to —
+    `uses: foo/bar@<40 hex>` — failed every single time. `fetch()` is init +
+    fetch + checkout, the sequence that treats a branch, a tag and a SHA
+    identically, and it brings the rest of what this needed anyway: no terminal
+    prompt on a private repo, and a Docker fallback for a machine without git.
+    """
+    from yeet.actions import fetch as fetch_mod
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    result = fetch_mod.fetch(mount=dest.parent, dest_rel=dest.name, source=url, ref=ref)
+    return result.ok
 
 
 def apply_inputs(
@@ -288,12 +409,54 @@ def input_env_name(raw: str) -> str:
     return f"INPUT_{name}"
 
 
-def composite_steps(action: ResolvedAction, input_env: dict[str, str]) -> list[Step]:
-    """The inlined steps of a composite action, with the input env merged in.
+def _inputs_context(action: ResolvedAction, with_values: dict[str, Any]) -> dict[str, str]:
+    """`${{ inputs.<name> }}` for the action's own steps: `with:` over defaults.
+
+    Keyed by the input's REAL name (`node-version`), not the env spelling
+    (`INPUT_NODE_VERSION`) — an expression names the input as the action.yml
+    declares it, and the mangling that makes a legal shell variable is a
+    one-way trip.
+    """
+    out: dict[str, str] = {}
+    for name, spec in action.inputs.items():
+        value = with_values.get(name, spec.default)
+        out[name] = "" if value is None else str(value)
+    return out
+
+
+def _rebase_uses(uses: str | None, action_dir: Path) -> str | None:
+    """A composite's inner `uses: ./x` means "relative to the ACTION".
+
+    Once the steps are inlined they are indistinguishable from the job's own,
+    and the job resolves `./x` against the WORKSPACE. For an action cloned into
+    the cache that is a different repository entirely, so the path is made
+    absolute here, while the action it came from is still known.
+
+    Only `./` and `../`. A `~`-relative path is the user's home in both frames,
+    and `owner/repo@ref` and `docker://` mean the same thing wherever they are
+    written — rewriting either would be inventing a path nobody asked for.
+    """
+    if uses is None or not uses.startswith(("./", "../")):
+        return uses
+    return str((action_dir / uses).resolve())
+
+
+def composite_steps(
+    action: ResolvedAction,
+    input_env: dict[str, str],
+    with_values: dict[str, Any] | None = None,
+) -> list[Step]:
+    """The inlined steps of a composite action, with its inputs bound to them.
 
     Pure: returns copies, never mutates the resolved action. The step's own
     explicit `env:` wins over `INPUT_*`, matching GitHub's precedence.
+
+    Inputs are bound TWICE on purpose, because a workflow reaches them two
+    ways and both have to work: `$INPUT_PATH` in a shell, which the env gives,
+    and `${{ inputs.path }}` in an expression, which it does not — that form
+    resolved to an empty string for as long as composite actions have run here.
     """
+    resolved_inputs = _inputs_context(action, with_values or {})
     out: list[Step] = []
     for step in action.steps:
         merged = {**input_env, **(step.env or {})}
@@ -303,7 +466,7 @@ def composite_steps(action: ResolvedAction, input_env: dict[str, str]) -> list[S
                 name=step.name,
                 id=step.id,
                 run=step.run,
-                uses=step.uses,
+                uses=_rebase_uses(step.uses, action.action_dir),
                 with_=dict(step.with_),
                 env=merged,
                 if_=step.if_,
@@ -311,6 +474,7 @@ def composite_steps(action: ResolvedAction, input_env: dict[str, str]) -> list[S
                 working_directory=step.working_directory,
                 continue_on_error=step.continue_on_error,
                 timeout_minutes=step.timeout_minutes,
+                action_inputs=resolved_inputs,
                 key_pos=dict(step.key_pos),
             )
         )
