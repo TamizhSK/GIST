@@ -63,13 +63,38 @@ fi
 say()  { printf '%s\n' "$*"; }
 rule() { i=0; s=''; while [ "$i" -lt "$1" ]; do s="$s$HZ"; i=$((i + 1)); done; printf '%s' "$s"; }
 
+# The wordmark, in the sunset the README's logo uses: indigo at the top of the
+# letters, magenta through the middle, the low sun at the baseline. Six rows of
+# the same block art, one colour per row.
+#
+# Unicode is gated on the LOCALE, not on having a terminal. A tty with a
+# latin-1 locale is a real configuration — an old ssh session, a container with
+# no locale set — and printing block characters into it produces mojibake,
+# which is a worse first impression than plain text. `TTY` says "may I use
+# colour"; `UNICODE` says "may I use these characters". They are different
+# questions and this used to conflate them.
+_BAND_1='38;5;62'    # indigo
+_BAND_2='38;5;97'    # violet
+_BAND_3='38;5;133'   # magenta
+_BAND_4='38;5;168'   # rose
+_BAND_5='38;5;209'   # coral, the brand accent
+_BAND_6='38;5;215'   # the low sun
+
 banner() {
     [ "$TTY" = 0 ] && { say "yeet installer"; say ""; return; }
+    if [ "$UNICODE" = 0 ]; then
+        printf '\n%s%s  Y E E T%s   %sa local GitHub Actions runner%s\n\n' \
+            "$B" "$ACCENT" "$N" "$MUTE" "$N"
+        return
+    fi
     say ""
-    printf '%s%s   ▄  ▄  ▄▄▄  ▄▄▄  ▄▄▄%s\n' "$B" "$ACCENT" "$N"
-    printf '%s%s   ▀▄▀  ██▄  ██▄   ▐█ %s   %sa local GitHub Actions runner%s\n' "$B" "$ACCENT" "$N" "$MUTE" "$N"
-    printf '%s%s    █   ▄▄█  ▄▄█   ▐█ %s   %swith a dialect of its own%s\n' "$B" "$ACCENT" "$N" "$MUTE" "$N"
-    say ""
+    printf '  %s████     ████  ███████████  ███████████  █████████████%s\n' "${ESC}[${_BAND_1}m" "$N"
+    printf '  %s ████   ████   ████         ████              ████    %s\n' "${ESC}[${_BAND_2}m" "$N"
+    printf '  %s  ████ ████    █████████    █████████         ████    %s\n' "${ESC}[${_BAND_3}m" "$N"
+    printf '  %s   ███████     █████████    █████████         ████    %s\n' "${ESC}[${_BAND_4}m" "$N"
+    printf '  %s     ████      ████         ████              ████    %s\n' "${ESC}[${_BAND_5}m" "$N"
+    printf '  %s     ████      ███████████  ███████████       ████    %s\n' "${ESC}[${_BAND_6}m" "$N"
+    printf '\n  %sa local GitHub Actions runner, with a dialect of its own%s\n\n' "$MUTE" "$N"
 }
 
 # A step counter rather than a bare bullet: on a slow network the pip step can
@@ -87,6 +112,13 @@ die()   { printf '\n  %s%s %s%s\n\n' "$R" "$CROSS" "$*" "$N" >&2; exit 1; }
 # Runs a command with a spinner, keeping its output for the failure path only.
 # The success path stays quiet on purpose: pip's resolver output is 40 lines of
 # noise nobody reads, right up until it fails and every one of them matters.
+# POSIX only requires `sleep` to accept an INTEGER. GNU and busybox both take
+# fractions, so this is a fraction almost everywhere and one second on the
+# strict shells where a spinner is cosmetic anyway — better a slow spinner than
+# a log full of "sleep: invalid number".
+_TICK=0.1
+sleep 0.1 2>/dev/null || _TICK=1
+
 spin() {
     _label="$1"; shift
     if [ "$TTY" = 0 ]; then
@@ -100,7 +132,7 @@ spin() {
     while kill -0 "$_pid" 2>/dev/null; do
         for _f in $_frames; do
             printf '\r      %s%s%s %s ' "$ACCENT" "$_f" "$N" "$_label"
-            sleep 0.1
+            sleep "$_TICK"
             kill -0 "$_pid" 2>/dev/null || break
         done
     done
