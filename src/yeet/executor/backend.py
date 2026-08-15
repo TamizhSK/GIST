@@ -165,8 +165,26 @@ def get_docker_client() -> Any:
         client = docker.from_env()
         client.ping()
     except Exception as exc:  # noqa: BLE001 - DockerException et al
-        raise DockerUnavailable(f"cannot reach the Docker daemon: {_one_line(exc)}") from exc
+        raise DockerUnavailable(_no_daemon_reason(exc)) from exc
     return client
+
+
+def _no_daemon_reason(exc: BaseException) -> str:
+    """Why the daemon is unreachable, in words rather than in a tuple repr.
+
+    docker-py reports a missing socket as `Error while fetching server API
+    version: ('Connection aborted.', FileNotFoundError(2, 'No such file or
+    directory'))`. Every word of that is about our HTTP client and none of it
+    is about the user's machine, which is simply not running Docker.
+    """
+    text = _one_line(exc).lower()
+    if "no such file or directory" in text or "connection refused" in text:
+        return "no Docker daemon is listening"
+    if "permission denied" in text:
+        return "the Docker socket exists but this user cannot open it"
+    if "timed out" in text or "timeout" in text:
+        return "the Docker daemon did not answer in time (still starting up?)"
+    return f"cannot reach the Docker daemon: {_one_line(exc)}"
 
 
 def _one_line(exc: BaseException) -> str:

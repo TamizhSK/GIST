@@ -30,7 +30,7 @@ from yeet.core.events import META, LogEvent, LogSink
 from yeet.core.masking import Masker
 from yeet.core.result import JobResult, RunResult, Status, StepResult
 from yeet.executor import env as env_mod
-from yeet.executor.backend import Backend, JobContext
+from yeet.executor.backend import Backend, DockerUnavailable, JobContext
 from yeet.executor.contexts import for_instance
 from yeet.executor.steps import label
 from yeet.executor.workspace import RunLayout, create
@@ -217,6 +217,12 @@ def _collect(
 
         try:
             result = future.result()
+        except DockerUnavailable:
+            # NOT this job's failure. "This machine cannot run containers" is a
+            # fact about the machine, and every remaining job would hit it too
+            # — reporting it once per leg turns one problem into fourteen and
+            # buries the reason. It reaches `cmd_run`, which exits 3.
+            raise
         except Exception as exc:  # noqa: BLE001 - a backend bug is that job's failure
             _note(options, inst.key, f"{type(exc).__name__}: {exc}")
             result = _failed(inst, f"{type(exc).__name__}: {exc}")
