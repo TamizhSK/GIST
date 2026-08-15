@@ -239,3 +239,82 @@ def test_extraction_refuses_to_escape_the_destination(tmp_path, monkeypatch, wor
         cache_mod.restore_cache("evil", None, dest=dest)
 
     assert not (tmp_path / "escaped.txt").exists()
+
+
+# --- checkout ---------------------------------------------------------------
+
+
+def test_checkout_is_a_no_op_that_says_so(tmp_path, workspace):
+    """It is the first step of nearly every real workflow. A run whose opening
+    line reads `skipped (not the vibe)` looks like something went wrong before
+    anything started — and nothing did: the workspace IS the checkout."""
+    lines: list[str] = []
+    ctx = BuiltinContext(
+        root=tmp_path, run_id="run-1", workspace=workspace, inputs={}, emit=lines.append
+    )
+
+    result = run_builtin("actions/checkout", ctx)
+
+    assert result.ok
+    assert any("already this repository" in line for line in lines), lines
+
+
+def test_checkout_refuses_a_ref_without_a_path(tmp_path, workspace):
+    """The one thing this must never do is fetch over the workspace.
+
+    The user pointed yeet at a directory they are working in. Replacing its
+    contents with a different ref would discard uncommitted work to satisfy a
+    line in a YAML file, and no amount of logging makes that acceptable —
+    `path:` is how `actions/checkout` already spells "somewhere else", so the
+    refusal names it.
+    """
+    lines: list[str] = []
+    ctx = BuiltinContext(
+        root=tmp_path,
+        run_id="run-1",
+        workspace=workspace,
+        inputs={"ref": "v1.2.3"},
+        emit=lines.append,
+    )
+
+    result = run_builtin("actions/checkout", ctx)
+
+    assert not result.ok
+    assert "path:" in result.message, result.message
+    assert "v1.2.3" in result.message
+
+
+def test_checkout_fetches_a_ref_into_a_path(tmp_path, workspace):
+    """A workflow checking out a second repo alongside the first is ordinary,
+    and this is the case that used to be silently ignored."""
+    import subprocess
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=workspace, check=True, capture_output=True)
+
+    git("init", "-q")
+    git("config", "user.email", "a@b.c")
+    git("config", "user.name", "t")
+    (workspace / "file.txt").write_text("v1\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-qm", "one")
+    git("tag", "v1")
+    (workspace / "file.txt").write_text("v2\n", encoding="utf-8")
+    git("commit", "-qam", "two")
+
+    lines: list[str] = []
+    ctx = BuiltinContext(
+        root=tmp_path,
+        run_id="run-1",
+        workspace=workspace,
+        inputs={"ref": "v1", "path": "old"},
+        emit=lines.append,
+    )
+
+    result = run_builtin("actions/checkout", ctx)
+
+    assert result.ok, result.message
+    assert (workspace / "old" / "file.txt").read_text(encoding="utf-8").strip() == "v1"
+    assert (workspace / "file.txt").read_text(encoding="utf-8").strip() == "v2", (
+        "the working tree must be untouched"
+    )

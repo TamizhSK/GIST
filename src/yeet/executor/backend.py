@@ -71,6 +71,80 @@ class DockerUnavailable(Exception):
         self.hint = docker_host_hint()
 
 
+class DockerFailure(Exception):
+    """The daemon is fine; it refused to do the thing. Reads like a Diagnostic.
+
+    Everything the user sees about a failed pull, build, container start or
+    exec comes through here, because the alternative is what they got before:
+    `ImageNotFound: 404 Client Error for http+docker://localhost/v1.55/images/
+    create?tag=v9&fromImage=...`. That string contains the answer and buries it
+    behind an API version and a URL-encoded query.
+
+    Carries the raw daemon text in `detail` rather than discarding it — the
+    translation is a best guess made from a string, and when the guess is wrong
+    the user still needs the original to search for.
+    """
+
+    def __init__(self, code: str, message: str, *, hint: str = "", detail: str = "") -> None:
+        super().__init__("\n".join(self.lines(code, message, hint=hint, detail=detail)))
+        self.code = code
+        self.message = message
+        self.hint = hint
+        self.detail = detail
+
+    @staticmethod
+    def lines(code: str, message: str, *, hint: str, detail: str) -> list[str]:
+        out = [f"{code}: {message}"]
+        if hint:
+            out.append(f"  fix: {hint}")
+        if detail and detail not in message:
+            out.append(f"  docker said: {detail}")
+        return out
+
+    @property
+    def report(self) -> list[str]:
+        """One log line each. A sink renders lines, not paragraphs."""
+        return self.lines(self.code, self.message, hint=self.hint, detail=self.detail)
+
+
+DAEMON_GONE_MARKERS = (
+    "connection aborted",
+    "connection refused",
+    "connection reset",
+    "cannot connect to the docker daemon",
+    "error while fetching server api version",
+    "is the docker daemon running",
+    "broken pipe",
+    "connectionerror",
+    "remote end closed connection",
+    "not supported by the daemon",
+)
+"""Substrings that mean "the daemon went away", not "the daemon said no".
+
+Matched on text rather than on `docker.errors.*` classes because the SDK
+collapses almost everything into `APIError`/`DockerException`: the class tells
+us nothing useful and the message tells us everything. It also keeps this
+module importable — and this logic testable — without the SDK installed.
+"""
+
+
+def daemon_is_gone(exc: BaseException) -> bool:
+    """Did this exception mean the daemon died, rather than said no?
+
+    Walks `__cause__`/`__context__` because requests wraps the socket error and
+    docker-py wraps that again: the words that matter are three levels down.
+    """
+    seen = 0
+    current: BaseException | None = exc
+    while current is not None and seen < 5:
+        text = f"{type(current).__name__}: {current}".lower()
+        if any(marker in text for marker in DAEMON_GONE_MARKERS):
+            return True
+        current = current.__cause__ or current.__context__
+        seen += 1
+    return False
+
+
 def get_docker_client() -> Any:
     """`docker.from_env()`, with an error a human can act on.
 
@@ -91,5 +165,14 @@ def get_docker_client() -> Any:
         client = docker.from_env()
         client.ping()
     except Exception as exc:  # noqa: BLE001 - DockerException et al
-        raise DockerUnavailable(f"cannot reach the Docker daemon: {exc}") from exc
+        raise DockerUnavailable(f"cannot reach the Docker daemon: {_one_line(exc)}") from exc
     return client
+
+
+def _one_line(exc: BaseException) -> str:
+    """The exception's message with the newlines taken out.
+
+    Docker Desktop's "starting up" error is three lines of shell suggestion;
+    inside a log sink that is three events, one of which is the actual reason.
+    """
+    return " ".join(str(exc).split())

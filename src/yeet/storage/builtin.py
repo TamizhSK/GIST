@@ -115,6 +115,79 @@ def _save(ctx: BuiltinContext, key: str, paths: list[Path]) -> None:
         ctx.emit(f"saved cache `{key}`")
 
 
+def _checkout(ctx: BuiltinContext) -> BuiltinResult:
+    """`actions/checkout` — a no-op by default, a real fetch when asked.
+
+    THE DEFAULT. On GitHub the workspace starts empty and this clones into it.
+    Locally the workspace IS the checkout: it is the directory yeet was pointed
+    at, bind-mounted into the container. There is nothing to fetch and nothing
+    that could be more current than what is already there. It is a built-in
+    rather than a skip because it is the first step of nearly every real
+    workflow, and a run whose opening line reads `skipped (not the vibe)` looks
+    like something failed before anything started.
+
+    WHEN A `repository:` OR `ref:` IS GIVEN. Those name something other than the
+    working tree, and a workflow that checks out a second repo alongside the
+    first is ordinary. We fetch it — through host git, or through a git
+    container when the machine has Docker but no git (`actions/fetch.py`).
+
+    THE ONE THING THIS REFUSES. Fetching over the workspace root. The user
+    pointed us at a directory they are working in; replacing its contents with
+    a different ref would discard uncommitted work to satisfy a line in a YAML
+    file, and no amount of logging makes that acceptable. `path:` is how
+    `actions/checkout` already spells "somewhere else", so a `ref:` without a
+    `path:` is refused with the one-line fix rather than obeyed.
+    """
+    from yeet.actions import fetch as fetch_mod
+
+    repository = _text(ctx.inputs.get("repository"))
+    ref = _text(ctx.inputs.get("ref"))
+    path = _text(ctx.inputs.get("path"))
+
+    if not repository and not ref:
+        if path:
+            # Nothing to fetch, but say where the code the job will use lives.
+            ctx.emit(f"the workspace is already this repository (ignoring `path: {path}`)")
+        else:
+            ctx.emit("the workspace is already this repository")
+        return BuiltinResult(ok=True)
+
+    if not path:
+        return BuiltinResult(
+            ok=False,
+            message=(
+                f"`checkout` asks for `{repository or ref}` but no `path:`. Checking it out "
+                "over the workspace would discard your uncommitted work — add "
+                "`path: <subdir>` to fetch it alongside instead."
+            ),
+        )
+
+    source = _source_url(repository, ctx.workspace)
+    ctx.emit(f"fetching {source}{f' at {ref}' if ref else ''} into {path}/")
+    result = fetch_mod.fetch(mount=ctx.workspace, dest_rel=path, source=source, ref=ref)
+    if not result.ok:
+        return BuiltinResult(ok=False, message=result.message)
+
+    where = f" via {result.via}" if result.via else ""
+    at = f" at {result.commit[:12]}" if result.commit else ""
+    ctx.emit(f"checked out into {path}/{at}{where}")
+    return BuiltinResult(ok=True)
+
+
+def _source_url(repository: str, workspace: Path) -> str:
+    """`owner/repo` -> a GitHub URL; empty -> this workspace.
+
+    A bare `ref:` with no `repository:` means "this repo, at that ref", and the
+    local clone is the fastest and most private place to get it — no network,
+    and it already has the objects.
+    """
+    if not repository:
+        return str(workspace)
+    if "://" in repository or repository.startswith("git@"):
+        return repository
+    return f"https://github.com/{repository}.git"
+
+
 def _text(value: object) -> str:
     return "" if value is None else str(value).strip()
 
@@ -128,4 +201,5 @@ _HANDLERS: dict[str, Callable[[BuiltinContext], BuiltinResult]] = {
     "actions/upload-artifact": _upload_artifact,
     "actions/download-artifact": _download_artifact,
     "actions/cache": _cache,
+    "actions/checkout": _checkout,
 }

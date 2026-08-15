@@ -19,7 +19,8 @@ THREE OUTCOMES, and the difference matters to a user reading a log:
   the job at the point of the `uses:`, with `with:` mapped to `INPUT_*`. This
   is the one that makes composite actions actually run.
 
-* **builtin** — `actions/upload-artifact`, `download-artifact` and `cache`.
+* **builtin** — `actions/upload-artifact`, `download-artifact`, `cache` and
+  `checkout`.
   These three do not run as scripts anywhere: on GitHub they are node actions
   talking to a service API that does not exist here. Reimplementing their
   OBSERVABLE behaviour against `storage/` is the only way a real workflow gets
@@ -30,6 +31,22 @@ THREE OUTCOMES, and the difference matters to a user reading a log:
 * **unsupported** — docker and node actions (C15/C16). Still skipped, but now
   the message says which kind and why, instead of naming a developer and a
   ticket that closed.
+
+TWO LATER ADDITIONS, both of which turned a silent lie into an answer:
+
+`actions/setup-node` and its three siblings used to land in `unsupported`, and
+`unsupported` is SKIPPED, and skipped is GREEN. A workflow that asked for node
+20 therefore ran on whatever node the image had and passed. They are now
+inlined as a probe script — see `actions/toolchain.py` for why checking is the
+only honest thing a local runner can offer here, and why it has to happen as a
+step inside the container rather than as a built-in on the host.
+
+`owner/repo@ref` still reaches `resolver.resolve()`, which only answers about
+LOCAL paths, so a remote composite action is reported as unresolvable even
+though `resolver.resolve_remote()` (A20) could fetch it. That is the next
+call site to wire, and it is deliberately not wired here: cloning from a
+`uses:` line reaches the network mid-run, which needs its own decision about
+caching and offline behaviour.
 """
 
 from __future__ import annotations
@@ -39,6 +56,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from yeet.actions import toolchain
 from yeet.core.diagnostics import DiagnosticBag
 from yeet.core.ir import Step
 
@@ -54,8 +72,9 @@ _REF = re.compile(r"@.*$")
 UPLOAD_ARTIFACT = "actions/upload-artifact"
 DOWNLOAD_ARTIFACT = "actions/download-artifact"
 CACHE = "actions/cache"
+CHECKOUT = "actions/checkout"
 
-BUILTINS = frozenset({UPLOAD_ARTIFACT, DOWNLOAD_ARTIFACT, CACHE})
+BUILTINS = frozenset({UPLOAD_ARTIFACT, DOWNLOAD_ARTIFACT, CACHE, CHECKOUT})
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +104,22 @@ def plan_uses(step: Step, root: Path, bag: DiagnosticBag) -> UsesPlan:
     name = bare_name(uses)
     if name in BUILTINS:
         return UsesPlan(kind=BUILTIN, builtin=name, inputs=dict(step.with_))
+
+    # `setup-node` and its siblings become an inlined probe STEP, not a
+    # built-in. A built-in runs in-process on the host; the question is what
+    # the CONTAINER provides, and `node --version` on the host of a Docker run
+    # answers a different question. See `actions/toolchain.py`.
+    if toolchain.is_toolchain(name):
+        probe = Step(
+            pos=step.pos,
+            name=f"{name} (checking, not installing)",
+            run=toolchain.probe_script(name, dict(step.with_)),
+            shell="sh",
+            id=step.id,
+            if_=None,
+            continue_on_error=step.continue_on_error,
+        )
+        return UsesPlan(kind=INLINE, steps=[probe])
 
     if uses.startswith("docker://"):
         return UsesPlan(

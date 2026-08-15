@@ -26,6 +26,7 @@ REF="${YEET_REF:-main}"
 HOME_DIR="${YEET_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/yeet}"
 BIN_DIR="${YEET_BIN_DIR:-$HOME/.local/bin}"
 MIN_MINOR=10
+MAX_TESTED=13   # the newest minor the CI matrix actually runs
 TOTAL_STEPS=4
 
 # ── presentation ──────────────────────────────────────────────────────────────
@@ -168,11 +169,26 @@ else
       curl -LsSf https://astral.sh/uv/install.sh | sh"
 fi
 
-command -v git >/dev/null 2>&1 || die "git is required to install from the repo.
+# git is PREFERRED, not required. A `git+` URL needs it; a source tarball does
+# not, and GitHub serves one for every branch and tag. That matters on the
+# machines this script is most likely to meet: a slim container image, or a
+# corporate box where installing git is a ticket rather than a command.
+if command -v git >/dev/null 2>&1; then
+    SOURCE="git+$REPO@$REF"
+    ok "git $(git --version 2>/dev/null | awk '{print $3}')"
+else
+    case "$REPO" in
+        https://github.com/*)
+            SOURCE="${REPO%.git}/archive/$REF.tar.gz"
+            warn "no git — installing from a source tarball instead" ;;
+        *)
+            die "git is not installed, and $REPO is not a GitHub URL this can
+      fetch as a tarball instead.
 
       Debian/Ubuntu/WSL   sudo apt install git
-      macOS               xcode-select --install"
-ok "git $(git --version 2>/dev/null | awk '{print $3}')"
+      macOS               xcode-select --install" ;;
+    esac
+fi
 
 # ── 2. an environment that belongs to yeet alone ──────────────────────────────
 step "Creating an isolated environment"
@@ -184,12 +200,24 @@ mkdir -p "$HOME_DIR"
 
 VENV_PY="$HOME_DIR/venv/bin/python"
 if [ "$BACKEND" = uv ]; then
-    # `>=3.10` is a REQUEST, not a path: uv picks a satisfying interpreter it
-    # can already see, and downloads a managed one when it cannot.
-    if ! spin "creating the virtualenv" uv venv --python ">=3.$MIN_MINOR" "$HOME_DIR/venv"; then
-        sed 's/^/      /' "$HOME_DIR/install.log" >&2 2>/dev/null || true
-        die "uv could not create a virtualenv.
+    # `>=3.10,<3.14` is a REQUEST, not a path: uv picks a satisfying
+    # interpreter it can already see, and downloads a managed one when it
+    # cannot. The upper bound is the point — left open, uv installs the newest
+    # Python in existence, which is by definition one the CI matrix has never
+    # run and the first release with no wheels for a C-extension dependency
+    # would be discovered by a user rather than by us.
+    #
+    # It is a preference and not a requirement: a box whose only interpreter is
+    # newer than the range still gets an install, with a line saying so.
+    if ! spin "creating the virtualenv" \
+        uv venv --python ">=3.$MIN_MINOR,<3.$((MAX_TESTED + 1))" "$HOME_DIR/venv"; then
+        warn "no tested Python (3.$MIN_MINOR-3.$MAX_TESTED) available — trying anything newer"
+        if ! spin "creating the virtualenv" \
+            uv venv --python ">=3.$MIN_MINOR" "$HOME_DIR/venv"; then
+            sed 's/^/      /' "$HOME_DIR/install.log" >&2 2>/dev/null || true
+            die "uv could not create a virtualenv.
       Re-run with YEET_NO_UV=1 to use python -m venv instead."
+        fi
     fi
 else
     "$PYTHON" -m venv "$HOME_DIR/venv" || die "could not create a virtualenv in $HOME_DIR"
@@ -200,13 +228,13 @@ ok "$HOME_DIR ${MUTE}(python $("$VENV_PY" -c 'import platform; print(platform.py
 
 # ── 3. the tool and its dependencies ──────────────────────────────────────────
 step "Installing yeet and its dependencies"
-info "from $REPO@$REF"
+info "from $SOURCE"
 INSTALL_FAILED=""
 if [ "$BACKEND" = uv ]; then
-    spin "resolving and downloading" uv pip install --python "$VENV_PY" "git+$REPO@$REF" \
+    spin "resolving and downloading" uv pip install --python "$VENV_PY" "$SOURCE" \
         || INSTALL_FAILED=1
 else
-    spin "resolving and downloading" "$VENV_PY" -m pip install "git+$REPO@$REF" \
+    spin "resolving and downloading" "$VENV_PY" -m pip install "$SOURCE" \
         || INSTALL_FAILED=1
 fi
 if [ -n "$INSTALL_FAILED" ]; then

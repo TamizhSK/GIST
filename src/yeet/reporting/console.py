@@ -34,6 +34,7 @@ from yeet.reporting.theme import (
     SYMBOL_RUNNING,
     SYMBOL_SKIP,
     Colors,
+    color_level,
     colorize,
     format_summary,
 )
@@ -209,7 +210,11 @@ class RunConsole:
                 duration_s,
                 run_id=run_id,
                 job_count=job_count,
-                color=self.color,
+                # Detected from the real stream rather than passed as a bool:
+                # `self.color` is only permission, and a terminal that allows
+                # colour may still be a 16-colour one.
+                level=color_level(self.out, enabled=self.color),
+                panel=False,
             ),
         )
 

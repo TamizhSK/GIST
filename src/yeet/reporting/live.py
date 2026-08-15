@@ -50,6 +50,7 @@ from yeet.reporting.theme import (
     SYMBOL_FAIL,
     SYMBOL_PASS,
     SYMBOL_SKIP,
+    color_level,
     format_summary,
 )
 
@@ -380,7 +381,17 @@ class LiveRunConsole:
         One format function, one way of writing it out, for both renderers.
         """
         summary = format_summary(
-            workflow_name, status, duration_s, run_id=run_id, job_count=job_count, color=self._color
+            workflow_name,
+            status,
+            duration_s,
+            run_id=run_id,
+            job_count=job_count,
+            level=color_level(self.out, enabled=self._color),
+            # This renderer only exists when stdout is a terminal, so the
+            # framed form is safe here; `format_summary` still falls back to
+            # the plain line if the window is too narrow to frame cleanly.
+            panel=True,
+            width=self._console.width,
         )
         try:
             self.out.write(summary + "\n")

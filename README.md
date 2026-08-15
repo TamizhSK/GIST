@@ -1,4 +1,4 @@
-<img src="assets/yeet.svg" alt="yeet — run GitHub Actions workflows locally" width="445">
+<img src="assets/yeet.svg" alt="yeet — run GitHub Actions workflows locally" width="520">
 
 # yeet — run GitHub Actions workflows locally
 
@@ -43,9 +43,15 @@ Or install straight with [pipx](https://pipx.pypa.io):
 pipx install git+https://github.com/TamizhSK/GIST
 ```
 
-Needs **Python 3.10+** (Ubuntu 22.04 LTS and its WSL image ship 3.10). Docker
-is optional — workflows with `cooked_on: local` run in your own shell, so you
-can go end-to-end before you ever install a daemon. To remove it:
+Needs **Python 3.10+** — or nothing at all: where
+[uv](https://docs.astral.sh/uv/) is present the installer uses it and lets it
+fetch a Python, so a machine with no suitable interpreter still ends up
+working. 3.10 rather than 3.11 because that is what Ubuntu 22.04 LTS and its
+WSL image ship.
+
+git is optional too — without it the installer pulls a source tarball instead.
+Docker is optional — workflows with `cooked_on: local` run in your own shell,
+so you can go end-to-end before you ever install a daemon. To remove it:
 `yeet-uninstall`.
 
 ## Secrets and variables, imported locally
