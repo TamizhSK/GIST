@@ -48,6 +48,9 @@ from yeet.planner.plan import JobInstance
 
 KEEPALIVE_CMD = ["tail", "-f", "/dev/null"]
 
+_KILLED_EXIT_CODE = 137
+"""128 + SIGKILL. What a `docker kill` (and the OOM killer) leaves behind."""
+
 CONTAINER_PREFIX = "yeet"
 STOP_TIMEOUT_S = 5
 NAME_MAX = 63
@@ -156,7 +159,40 @@ class DockerExec:
         stream = api.exec_start(exec_id, stream=True, demux=True)
         chunks = list(_demux(stream, deadline=_deadline(request.timeout_s)))
         exit_code = api.exec_inspect(exec_id).get("ExitCode")
+
+        # A container that DIED under a running step — `docker kill` from
+        # another shell, Docker Desktop restarting, the OOM killer — surfaces
+        # here as a truncated stream and an exit code of None or 137, which on
+        # its own reads as "your build failed". It did not; it never finished.
+        # Saying which is the difference between debugging your code and
+        # debugging your laptop.
+        if exit_code is None or exit_code == _KILLED_EXIT_CODE:
+            reason = self._died_mid_step()
+            if reason:
+                chunks = [*chunks, (STDERR, reason.encode())]
         return (exit_code if isinstance(exit_code, int) else 1), chunks
+
+    def _died_mid_step(self) -> str:
+        """Why the container is not running, in one line, or "" if it is fine.
+
+        Asked of the daemon rather than inferred: a step can legitimately exit
+        137 by running something that was itself OOM-killed inside a container
+        that is still perfectly healthy.
+        """
+        try:
+            self._container.reload()
+            state = self._container.attrs.get("State", {})
+        except Exception:  # noqa: BLE001 - the container may be gone entirely
+            return "the container disappeared while this step was running"
+        if state.get("Running"):
+            return ""
+        if state.get("OOMKilled"):
+            return "the container ran out of memory and was killed (raise Docker's memory limit)"
+        code = state.get("ExitCode")
+        return (
+            "the container stopped while this step was running "
+            f"(exit {code}) - was it `docker kill`ed, or did Docker restart?"
+        )
 
 
 def _deadline(timeout_s: float | None) -> float | None:
