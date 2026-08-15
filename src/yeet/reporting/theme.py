@@ -62,10 +62,30 @@ LAST_BRANCH: Final[str] = "\\-- "
 PIPE: Final[str] = "|   "
 BLANK: Final[str] = "    "
 
-# Panel-drawing, same rule: the installer draws its closing panel with box
-# characters when the locale is UTF-8 and `+ - |` when it is not. Here it is
-# always the ASCII set, because unlike the installer this runs inside a
-# workflow log that may be read back anywhere.
+# Panel-drawing. Unlike the tree glyphs above — which stay ASCII because they
+# are printed on EVERY line, including into logs that get read back on a
+# machine we know nothing about — the panel is drawn once, at the end, and it
+# is the last thing the user looks at. So it takes the box characters when the
+# stream can encode them and falls back to `+ - |` when it cannot.
+#
+# Asked of the stream rather than of `LANG`: a UTF-8 locale piped into a file
+# opened as cp1252 still raises, and the encoding the bytes will actually be
+# written with is the only thing that answers the question.
+_PANEL_UNICODE = ("\u256d", "\u256e", "\u2570", "\u256f", "\u2500", "\u2502", "\u00b7")
+_PANEL_ASCII = ("+", "+", "+", "+", "-", "|", "*")
+
+
+def panel_glyphs(stream: TextIO | None = None) -> tuple[str, str, str, str, str, str, str]:
+    """`(tl, tr, bl, br, horizontal, vertical, bullet)` this stream can print."""
+    target = stream if stream is not None else sys.stdout
+    encoding = getattr(target, "encoding", None) or "ascii"
+    try:
+        "".join(_PANEL_UNICODE).encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        return _PANEL_ASCII
+    return _PANEL_UNICODE
+
+
 PANEL_CORNER: Final[str] = "+"
 PANEL_H: Final[str] = "-"
 PANEL_V: Final[str] = "|"
@@ -565,9 +585,11 @@ def _panel_width(width: int | None) -> int:
     like corruption: every row wraps and the right border lands under the left
     one.
     """
-    if width is not None:
-        return width
-    columns = shutil.get_terminal_size(fallback=(80, 24)).columns
+    columns = width if width is not None else shutil.get_terminal_size(fallback=(80, 24)).columns
+    # Capped, not just fitted. A caller passing the console width means "this
+    # is the room you have", not "fill it": a 111-column frame around two short
+    # rows is mostly empty box, and the eye has to travel the whole width to
+    # find out nothing is there.
     return min(PANEL_WIDTH, columns - 2)
 
 
@@ -637,8 +659,10 @@ def _summary_panel(
     coloured string is the classic way to get a box whose right edge wobbles by
     exactly the length of a colour code.
     """
-    edge = paint(PANEL_CORNER + PANEL_H * inner + PANEL_CORNER, ACCENT, level=level)
-    bar = paint(PANEL_V, ACCENT, level=level)
+    tl, tr, bl, br, horizontal, vertical, bullet = panel_glyphs()
+    top = paint(tl + horizontal * inner + tr, ACCENT, level=level)
+    bottom = paint(bl + horizontal * inner + br, ACCENT, level=level)
+    bar = paint(vertical, ACCENT, level=level)
 
     def row(*cells: tuple[str, Ink | None]) -> str:
         plain = "".join(text for text, _ in cells)
@@ -652,9 +676,9 @@ def _summary_panel(
 
     rows = [
         row((verdict, ink), ("  ", None), (workflow_name, BOLD)),
-        row((_fmt_detail(detail, duration_s), MUTE)),
+        row((_fmt_detail(detail, duration_s, bullet), MUTE)),
     ]
-    return "\n" + "\n".join([edge, *rows, edge])
+    return "\n" + "\n".join([top, *rows, bottom])
 
 
 def _truncate(
@@ -674,6 +698,6 @@ def _truncate(
     return tuple(kept)
 
 
-def _fmt_detail(detail: list[str], duration_s: float) -> str:
+def _fmt_detail(detail: list[str], duration_s: float, bullet: str = SYMBOL_BULLET) -> str:
     parts = [f"{duration_s:.1f}s", *detail]
-    return f"  {SYMBOL_BULLET}  ".join(parts)
+    return f"  {bullet}  ".join(parts)

@@ -19,6 +19,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from yeet.executor.backend import DockerFailure, daemon_is_gone
 from yeet.executor.images import BASE_IMAGE, ImageSpec
 
 TAG_PREFIX = "yeet-local"
@@ -183,8 +184,83 @@ def _prepare_once(
             return reference
         if notify is not None:
             notify(reference)
-        prepare()
+        try:
+            prepare()
+        except Exception as exc:  # noqa: BLE001 - docker raises a dozen types
+            raise _translate(reference, exc) from exc
     return reference
+
+
+#: What the daemon says -> what it means. Matched on the message because the
+#: SDK collapses nearly everything into `APIError`, so the class is useless and
+#: the text is not.
+_PULL_CAUSES: tuple[tuple[tuple[str, ...], str, str], ...] = (
+    (
+        (
+            "no such host",
+            "temporary failure in name resolution",
+            "dial tcp",
+            "network is unreachable",
+            "i/o timeout",
+            "connection timed out",
+        ),
+        "cannot reach the registry",
+        "check your network, or run the job with `cooked_on: local` to skip containers entirely",
+    ),
+    (
+        ("not found", "manifest unknown", "repository does not exist", "404"),
+        "no such image",
+        "check the spelling and the tag — `python:3.12`, not `python:3.12.0.1`",
+    ),
+    (
+        ("unauthorized", "authentication required", "denied", "403", "401"),
+        "the registry refused access",
+        "run `docker login` for that registry, or use a public image",
+    ),
+    (
+        ("toomanyrequests", "rate limit", "429"),
+        "the registry is rate-limiting this machine",
+        "wait, run `docker login` (authenticated pulls have a higher limit), or use a local image",
+    ),
+    (
+        (
+            "no matching manifest",
+            "does not match the detected host platform",
+            "no such image: ",
+            "platform",
+        ),
+        "that image has no build for this machine's architecture",
+        "on Apple Silicon try an image with an arm64 build, or add `platform: linux/amd64` "
+        "to the job's container and expect it to run under emulation",
+    ),
+    (
+        ("no space left on device",),
+        "the disk is full",
+        "`docker system prune` frees the images and layers Docker is holding",
+    ),
+)
+
+
+def _translate(reference: str, exc: BaseException) -> Exception:
+    """A docker exception -> something a person can act on.
+
+    The raw form is `ImageNotFound: 404 Client Error for
+    http+docker://localhost/v1.55/images/create?tag=v9&fromImage=x` — which
+    contains the answer and buries it behind an API version and a URL-encoded
+    query. `detail` keeps the original, because this translation is a guess
+    made from a string and a wrong guess must not cost the user the evidence.
+    """
+    if daemon_is_gone(exc):
+        from yeet.executor.backend import DockerUnavailable
+
+        return DockerUnavailable(f"the Docker daemon went away while preparing `{reference}`")
+
+    text = " ".join(str(exc).split())
+    lowered = text.lower()
+    for markers, message, hint in _PULL_CAUSES:
+        if any(marker in lowered for marker in markers):
+            return DockerFailure("YEET-E320", f"`{reference}`: {message}", hint=hint, detail=text)
+    return DockerFailure("YEET-E320", f"could not prepare the image `{reference}`", detail=text)
 
 
 def ensure_pulled(client: Any, reference: str, notify: Callable[[str], None] | None = None) -> str:

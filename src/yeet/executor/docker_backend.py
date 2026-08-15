@@ -13,16 +13,24 @@ import signal
 import threading
 import time
 from collections.abc import Iterable, Iterator
+from dataclasses import replace
 from pathlib import Path
 from types import FrameType
 from typing import Any
 
 from yeet.core.events import META, STDERR, STDOUT, LogEvent
+from yeet.core.ir import Job
 from yeet.core.project import Project
 from yeet.core.result import JobResult, Status, StepResult
 from yeet.executor import build as build_mod
 from yeet.executor import env as env_mod
-from yeet.executor.backend import JobContext, get_docker_client
+from yeet.executor import interpolate
+from yeet.executor.backend import (
+    DockerFailure,
+    JobContext,
+    daemon_is_gone,
+    get_docker_client,
+)
 from yeet.executor.build import project_slug
 from yeet.executor.images import ImageKind, ImageResolutionError, ImageSpec, resolve_image
 from yeet.executor.paths import CONTAINER_WORKSPACE, to_container_path, to_workspace_path
@@ -221,22 +229,33 @@ class DockerBackend:
             in_container=True,
         )
 
+        # A leg that asked for the host runs on the host, even inside a Docker
+        # run. `runs-on: ${{ matrix.os }}` over `[ubuntu-latest, local]` is one
+        # workflow with both kinds in it, and the backend is chosen once for
+        # the whole run — so without this the `local` leg reached the daemon
+        # and tried to PULL AN IMAGE CALLED "local".
+        if self._wants_host(inst, config):
+            from yeet.executor.local_backend import LocalBackend
+
+            return LocalBackend(self.root, layout=self._layout).run_job(inst, ctx)
+
         try:
             image = self._ensure_image(inst, config)
+        except DockerFailure as exc:
+            for line in exc.report:
+                _note(config, line)
+            return self._failed(inst, started)
         except ImageResolutionError as exc:
             _note(config, str(exc.diagnostic))
-            return JobResult(
-                job_key=inst.key,
-                matrix_leg=dict(inst.leg),
-                status=Status.FAILURE,
-                steps=[
-                    StepResult(step_name=label(step), status=Status.SKIPPED)
-                    for step in inst.job.steps
-                ],
-                duration_s=time.monotonic() - started,
-            )
+            return self._failed(inst, started)
 
-        container = self._create(image, inst, base, layout.run_id)
+        try:
+            container = self._create(image, inst, base, layout.run_id)
+        except Exception as exc:  # noqa: BLE001 - the daemon refuses for many reasons
+            for line in _create_failure(image, exc).report:
+                _note(config, line)
+            return self._failed(inst, started)
+
         try:
             container.start()
             results = run_steps(config, DockerExec(self.client, container))
@@ -247,7 +266,7 @@ class DockerBackend:
         return build_job_result(config, inst, results, started)
 
     def _ensure_image(self, inst: JobInstance, config: StepLoopConfig) -> str:
-        spec: ImageSpec = resolve_image(inst.job, self.project)
+        spec: ImageSpec = resolve_image(self._resolved_job(inst, config), self.project)
         if spec.note:
             _note(config, spec.note)
 
@@ -274,6 +293,58 @@ class DockerBackend:
                 spec.reference,
                 lambda ref: _note(config, f"pulling {ref}"),
             )
+        )
+
+    def _wants_host(self, inst: JobInstance, config: StepLoopConfig) -> bool:
+        """Did this leg ask for `cooked_on: local`, once its matrix is known?"""
+        try:
+            return resolve_image(self._resolved_job(inst, config), self.project).kind is (
+                ImageKind.LOCAL
+            )
+        except ImageResolutionError:
+            return False
+
+    def _failed(self, inst: JobInstance, started: float) -> JobResult:
+        """A job that never started: every step SKIPPED, the job FAILED.
+
+        Reported step by step rather than as one line, because a run report
+        with silent gaps in it is worse than a long one — the user needs to
+        see that nothing ran, not infer it.
+        """
+        return JobResult(
+            job_key=inst.key,
+            matrix_leg=dict(inst.leg),
+            status=Status.FAILURE,
+            steps=[
+                StepResult(step_name=label(step), status=Status.SKIPPED) for step in inst.job.steps
+            ],
+            duration_s=time.monotonic() - started,
+        )
+
+    def _resolved_job(self, inst: JobInstance, config: StepLoopConfig) -> Job:
+        """The job with `runs-on`/`container`/`dockerfile` interpolated.
+
+        `runs-on: ${{ matrix.os }}` is how every cross-platform workflow in
+        existence is written, and the image resolver was reading it RAW — so
+        the literal string `${{ matrix.os }}` reached the runner-label table,
+        matched nothing, and every leg of the matrix died with E315 saying it
+        was "not a known runner label or image". The leg knew its own value the
+        whole time; nothing had asked.
+
+        A copy, never the IR: `Job` is shared by the whole plan, and the legs
+        of a matrix run in parallel threads off one object — writing the
+        expanded value back would race, and each leg would see whichever value
+        landed last.
+        """
+        job = inst.job
+        raw = (job.runs_on, job.container_image, job.dockerfile)
+        if not any(value and "${{" in value for value in raw):
+            return job
+        return replace(
+            job,
+            runs_on=_expand(job.runs_on, config),
+            container_image=_expand(job.container_image, config),
+            dockerfile=_expand(job.dockerfile, config),
         )
 
     def _create(self, image: str, inst: JobInstance, base: dict[str, str], run_id: str) -> Any:
@@ -345,6 +416,68 @@ def project_labels(root: Path, run_id: str, job_key: str) -> dict[str, str]:
         LABEL_RUN: run_id,
         LABEL_JOB: job_key,
     }
+
+
+#: Why `containers.create` refused. Separate from the pull table in `build.py`
+#: because these are the failures that survive a SUCCESSFUL pull — the image is
+#: on the machine and still cannot run here.
+_CREATE_CAUSES: tuple[tuple[tuple[str, ...], str, str], ...] = (
+    (
+        ("no matching manifest", "platform", "exec format error", "cannot be used on this"),
+        "that image has no build for this machine's architecture",
+        "this is an arm64 Mac: use an image with an arm64 build, or accept slow "
+        "emulation by pulling it with `docker pull --platform linux/amd64` first",
+    ),
+    (
+        ("no space left on device", "disk quota"),
+        "the disk is full",
+        "`docker system prune` frees the images and layers Docker is holding",
+    ),
+    (
+        ("permission denied", "operation not permitted"),
+        "the daemon refused for permission reasons",
+        "check that your user can reach the Docker socket (on Linux: the `docker` group)",
+    ),
+    (
+        ("mounts denied", "not shared from the host", "is not shared"),
+        "Docker is not allowed to mount this directory",
+        "add the project's parent directory to Docker Desktop's File Sharing list",
+    ),
+    (
+        ("conflict", "already in use by container"),
+        "a container of that name is already there",
+        "run `yeet prune` to clear leftovers from an interrupted run",
+    ),
+)
+
+
+def _create_failure(image: str, exc: BaseException) -> DockerFailure:
+    """`containers.create` said no. Say which no, and what to do about it.
+
+    Untranslated, this reaches the user as a docker-py `APIError` carrying an
+    HTTP status and a URL — which is a fact about our HTTP client, not about
+    their machine.
+    """
+    if daemon_is_gone(exc):
+        return DockerFailure(
+            "YEET-E321",
+            "the Docker daemon went away while starting the job",
+            hint="check that Docker is still running, then re-run",
+            detail=" ".join(str(exc).split()),
+        )
+    text = " ".join(str(exc).split())
+    lowered = text.lower()
+    for markers, message, hint in _CREATE_CAUSES:
+        if any(marker in lowered for marker in markers):
+            return DockerFailure("YEET-E321", f"`{image}`: {message}", hint=hint, detail=text)
+    return DockerFailure("YEET-E321", f"could not start a container from `{image}`", detail=text)
+
+
+def _expand(value: str | None, config: StepLoopConfig) -> str | None:
+    """Interpolate one `runs-on`-ish field, or leave it exactly as it was."""
+    if not value or "${{" not in value:
+        return value
+    return interpolate.expand(value, config.contexts, config.degraded)
 
 
 def _note(config: StepLoopConfig, text: str) -> None:

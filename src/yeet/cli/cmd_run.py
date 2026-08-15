@@ -233,6 +233,13 @@ def _backend(root: Path, project: Project, workflow: Workflow) -> Backend:
     """
     kinds = set()
     for job in workflow.jobs.values():
+        # An unexpanded `runs-on: ${{ matrix.os }}` cannot be resolved here —
+        # the matrix has not been expanded yet and there is no leg to ask. It
+        # is not LOCAL either, so assume a container and let the backend
+        # resolve it per leg, where the value is finally known.
+        if job.runs_on and "${{" in job.runs_on:
+            kinds.add(ImageKind.BASE)
+            continue
         try:
             kinds.add(resolve_image(job, project).kind)
         except ImageResolutionError:
