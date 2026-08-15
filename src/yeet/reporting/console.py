@@ -27,17 +27,24 @@ from yeet.core.events import (
 )
 from yeet.reporting.theme import (
     BRANCH,
+    GUTTER,
+    JOB,
+    MUTE,
     PIPE,
     STATUS_COOKED,
-    SYMBOL_FAIL,
-    SYMBOL_PASS,
     SYMBOL_RUNNING,
-    SYMBOL_SKIP,
-    Colors,
     color_level,
-    colorize,
     format_summary,
+    ink_for_status,
+    paint,
 )
+
+# Aliased: `core.events` already binds META and STDERR as STREAM names, and a
+# stream is not a colour. Importing the inks under the same names would shadow
+# the constants this file compares `event.stream` against.
+from yeet.reporting.theme import META as META_INK
+from yeet.reporting.theme import STDERR as STDERR_INK
+from yeet.reporting.theme import STEP as STEP_INK
 
 
 class RunConsole:
@@ -65,6 +72,10 @@ class RunConsole:
     ) -> None:
         self.out = out if out is not None else sys.stdout
         self.color = color
+        # Resolved once: the probes behind it (`tput colors`, TERM,
+        # COLORTERM) cannot change mid-run, and asking per line would shell
+        # out per line.
+        self._level = color_level(self.out, enabled=color)
         self.verbose = verbose
         # Per JOB, not one shared counter. Jobs in a wave emit from parallel
         # threads, so a single `_group_depth` meant one job's `::group::`
@@ -105,7 +116,7 @@ class RunConsole:
                 return
             group_name = text[len("::group::") :].strip()
             if group_name != event.step:
-                header = colorize(f">> {group_name}", Colors.BOLD + Colors.CYAN, color=self.color)
+                header = paint(f">> {group_name}", STEP_INK, level=self._level)
                 self._print(event.job, "  " * (depth + 2) + header)
             self._group_depth[event.job] = depth + 1
             return
@@ -116,10 +127,9 @@ class RunConsole:
         indent = "  " * (depth + 2)
 
         if event.stream == STDERR:
-            self._print(event.job, indent + colorize(text, Colors.RED, color=self.color))
+            self._print(event.job, indent + paint(text, STDERR_INK, level=self._level))
         elif event.stream == META:
-            style = Colors.DIM + Colors.ITALIC
-            self._print(event.job, indent + colorize(text, style, color=self.color))
+            self._print(event.job, indent + paint(text, META_INK, level=self._level))
         else:
             self._print(event.job, indent + text)
 
@@ -142,7 +152,7 @@ class RunConsole:
         if len(self._seen_jobs) < 2:
             return ""
         bar = PIPE.strip() or "|"
-        return colorize(f"{job:<{self._label_width}} {bar} ", Colors.DIM, color=self.color)
+        return paint(f"{job:<{self._label_width}} {bar} ", GUTTER, level=self._level)
 
     def _headers(self, event: LogEvent) -> None:
         """Print each job and step header once, even when parallel legs interleave."""
@@ -150,16 +160,14 @@ class RunConsole:
             self._seen_jobs.append(event.job)
             self._label_width = max(self._label_width, len(event.job))
             self._group_depth[event.job] = 0
-            job_hdr = colorize(
-                f"{SYMBOL_RUNNING} {event.job}", Colors.BOLD + Colors.BLUE, color=self.color
-            )
-            tag = colorize(f"[{STATUS_COOKED}]", Colors.DIM, color=self.color)
+            job_hdr = paint(f"{SYMBOL_RUNNING} {event.job}", JOB, level=self._level)
+            tag = paint(f"[{STATUS_COOKED}]", MUTE, level=self._level)
             self._print("", f"\n{job_hdr} {tag}")
 
         if event.step and self._job_steps.get(event.job) != event.step:
             self._job_steps[event.job] = event.step
-            step_hdr = colorize(
-                f"  {BRANCH}{SYMBOL_RUNNING} {event.step}", Colors.CYAN, color=self.color
+            step_hdr = paint(
+                f"  {BRANCH}{SYMBOL_RUNNING} {event.step}", STEP_INK, level=self._level
             )
             self._print(event.job, step_hdr)
 
@@ -173,9 +181,9 @@ class RunConsole:
         one) as `_headers` used for this row's opening line, so the icon lands
         in the same column the running marker did instead of jumping in front
         of the branch."""
-        icon, style = _glyph(status)
+        icon, ink = ink_for_status(status)
         dur = f" ({duration_s:.1f}s)" if duration_s is not None else ""
-        self._print(job, colorize(f"{prefix}{icon} {name}{dur}", style, color=self.color))
+        self._print(job, paint(f"{prefix}{icon} {name}{dur}", ink, level=self._level))
 
     def _print(self, job: str, msg: str) -> None:
         """`job` is "" for a line that owns the full width (a job header).
@@ -213,20 +221,7 @@ class RunConsole:
                 # Detected from the real stream rather than passed as a bool:
                 # `self.color` is only permission, and a terminal that allows
                 # colour may still be a 16-colour one.
-                level=color_level(self.out, enabled=self.color),
+                level=self._level,
                 panel=False,
             ),
         )
-
-
-def _glyph(status: str | None) -> tuple[str, str]:
-    """`status` is a `core.result.Status` value — `"slayed"`, `"flopped"`,
-    `"skipped"`, `"cancelled"`, or `None` for a status we don't recognise
-    (never happens in practice, but a report must not crash over a glyph)."""
-    if status == "slayed":
-        return SYMBOL_PASS, Colors.BOLD + Colors.GREEN
-    if status == "flopped":
-        return SYMBOL_FAIL, Colors.BOLD + Colors.RED
-    if status in ("skipped", "cancelled"):
-        return SYMBOL_SKIP, Colors.DIM
-    return SYMBOL_RUNNING, Colors.CYAN
