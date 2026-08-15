@@ -14,6 +14,7 @@ import typer
 
 from yeet.cli import EXIT_BAD_WORKFLOW, color_enabled
 from yeet.reporting.render import render_diagnostics
+from yeet.reporting.theme import SYMBOL_PASS
 from yeet.triggers.watcher import DEBOUNCE_MS, LockHeld
 from yeet.triggers.watcher import watch as watch_paths
 from yeet.validation.pipeline import validate_file
@@ -43,7 +44,7 @@ def watch(
         if len(bag):
             typer.echo(render_diagnostics(bag, color=color))
         if bag.exit_code(strict=strict) == 0:
-            typer.secho("✔ clean", fg=typer.colors.GREEN if color else None)
+            typer.secho(f"{SYMBOL_PASS} clean", fg=typer.colors.GREEN if color else None)
 
     def on_error(exc: Exception) -> None:
         # The daemon survives; the user still hears about it.

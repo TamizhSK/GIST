@@ -12,6 +12,7 @@ from typing import Annotated
 
 import typer
 
+from yeet.reporting.theme import SYMBOL_BULLET
 from yeet.triggers import hooks
 
 hooks_app = typer.Typer(no_args_is_help=True, help="Git hook integration.")
@@ -35,7 +36,7 @@ def install(
 
     typer.echo("Installed git hooks:")
     for h in installed:
-        typer.echo(f"  • {h}")
+        typer.echo(f"  {SYMBOL_BULLET} {h}")
 
 
 @hooks_app.command("uninstall")
@@ -50,4 +51,4 @@ def uninstall(
         return
     typer.echo("Removed yeet git hooks:")
     for h in removed:
-        typer.echo(f"  • {h}")
+        typer.echo(f"  {SYMBOL_BULLET} {h}")

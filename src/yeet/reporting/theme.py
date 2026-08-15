@@ -52,6 +52,20 @@ SYMBOL_FAIL: Final[str] = "[FAIL]"
 SYMBOL_SKIP: Final[str] = "[SKIP]"
 SYMBOL_RUNNING: Final[str] = ">"
 SYMBOL_BULLET: Final[str] = "*"
+SYMBOL_WARN: Final[str] = "[!]"
+SYMBOL_NOTE: Final[str] = "note:"
+SYMBOL_ARROW: Final[str] = "->"
+SYMBOL_FROM: Final[str] = "<-"
+
+# Everything above is 7-bit ASCII, and that is the whole requirement: these
+# reach a legacy Windows console (cp437/cp1252), an ssh session with no locale,
+# a CI log viewer, and a `yeet run > out.txt` opened in any editor. A `✔` or a
+# `📦` is one `UnicodeEncodeError` away from taking down the command that was
+# only trying to tell you something — and on the consoles that CAN print them,
+# they are usually the wrong width, which breaks every aligned column after.
+#
+# `reporting.live` may use box characters because it has already established
+# that it is talking to a real terminal; nothing in `cli/` may.
 
 # Tree-drawing, ASCII-art style — the same four glyphs `tree --charset ascii`
 # uses. Shared between `reporting.console` (which only ever uses BRANCH; it

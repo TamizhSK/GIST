@@ -16,6 +16,7 @@ from typing import Annotated
 
 import typer
 
+from yeet.reporting.theme import SYMBOL_BULLET, SYMBOL_FROM, SYMBOL_WARN
 from yeet.secrets import store
 from yeet.secrets.store import SecretsError
 
@@ -54,7 +55,7 @@ def _passphrase(*, confirm: bool) -> str:
 def _warn_if_legacy(root: Path) -> None:
     if store.is_legacy_plaintext(root):
         typer.secho(
-            "⚠ .yeet/.secrets is in the old PLAINTEXT format. "
+            f"{SYMBOL_WARN} .yeet/.secrets is in the old PLAINTEXT format. "
             "Run `yeet secrets set <NAME>` on any secret to re-encrypt the whole store.",
             fg=typer.colors.YELLOW,
             err=True,
@@ -101,7 +102,7 @@ def list_() -> None:
         return
     typer.echo("Stored secrets:")
     for key in keys:
-        typer.echo(f"  • {key}")
+        typer.echo(f"  {SYMBOL_BULLET} {key}")
 
 
 @secrets_app.command("rm")
@@ -201,12 +202,16 @@ def import_(
         typer.echo(
             f"  {'+' if not value else '='} {name}"
             f"{typer.style(f'  ({kind})', fg=typer.colors.BRIGHT_BLACK)}"
-            + (typer.style("  ← from your environment", fg=typer.colors.GREEN) if value else "")
+            + (
+                typer.style(f"  {SYMBOL_FROM} from your environment", fg=typer.colors.GREEN)
+                if value
+                else ""
+            )
         )
 
     for name in sorted(wanted):
         if name in existing:
-            dot = typer.style("·", fg=typer.colors.BRIGHT_BLACK)
+            dot = typer.style("-", fg=typer.colors.BRIGHT_BLACK)
             typer.echo(f"  {dot} {name}  already in .env")
 
     if not added:

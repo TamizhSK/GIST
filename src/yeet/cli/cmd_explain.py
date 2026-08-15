@@ -72,7 +72,7 @@ def explain(
 
     # `docs/rules.md` is not installed alongside the package; say the same
     # things from the registry, which is where that document is generated from.
-    typer.echo(f"{rule.code} — {rule.title}")
+    typer.echo(f"{rule.code} - {rule.title}")
     typer.echo("")
     typer.echo(f"  Default severity: {rule.default_severity.value}")
     typer.echo(f"  Pipeline layer:   {rule.layer}")

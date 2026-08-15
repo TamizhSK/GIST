@@ -19,11 +19,19 @@ import typer
 from yeet.analyzer.project import analyze
 from yeet.cli import color_enabled
 from yeet.core.project import Project
+from yeet.reporting.theme import (
+    SYMBOL_FAIL,
+    SYMBOL_NOTE,
+    SYMBOL_PASS,
+    SYMBOL_SKIP,
+    SYMBOL_WARN,
+)
 from yeet.validation.pipeline import validate_file
 
-_OK = "✔"
-_BAD = "✖"
-_SKIP = "~"
+# ASCII, from `reporting.theme` — see the note there on why.
+_OK = SYMBOL_PASS
+_BAD = SYMBOL_FAIL
+_SKIP = SYMBOL_SKIP
 
 
 def _echo(text: str, *, color: bool, fg: str | None = None) -> None:
@@ -79,17 +87,17 @@ def scan(
     color = color_enabled(ctx)
     project = analyze(path)
 
-    _echo(f"📦 project: {project.root}", color=color, fg=typer.colors.BRIGHT_WHITE)
+    _echo(f"project: {project.root}", color=color, fg=typer.colors.BRIGHT_WHITE)
     if project.is_git:
         branch = project.branch or "detached"
         _echo(f"   git:     {branch}", color=color, fg=typer.colors.CYAN)
     else:
         _echo("   git:     not a repo", color=color, fg=typer.colors.CYAN)
     _echo(f"   stack:   {project.stack}", color=color)
-    _echo(f"   markers: {', '.join(_markers(project)) or '— none —'}", color=color)
+    _echo(f"   markers: {', '.join(_markers(project)) or '- none -'}", color=color)
     if project.truncated:
         _echo(
-            "   ⚠ discovery hit the file cap — this report may be incomplete.",
+            f"   {SYMBOL_WARN} discovery hit the file cap — this report may be incomplete.",
             color=color,
             fg=typer.colors.YELLOW,
         )
@@ -105,7 +113,7 @@ def scan(
         raise typer.Exit(0)
 
     _echo("", color=color)
-    _echo(f"🔎 flows found: {len(project.flows)}", color=color, fg=typer.colors.BRIGHT_WHITE)
+    _echo(f"flows found: {len(project.flows)}", color=color, fg=typer.colors.BRIGHT_WHITE)
     for flow in project.flows:
         rel = flow.relative_to(project.root)
         # Which convention matched. Worth one word: flows are found at any
@@ -118,7 +126,7 @@ def scan(
         if status == "bad":
             _echo(
                 f"   {_BAD} {rel}{tag}  "
-                f"{n_errors} errors, {n_warnings} warnings → run `yeet check`",
+                f"{n_errors} errors, {n_warnings} warnings -> run `yeet check`",
                 color=color,
                 fg=typer.colors.RED,
             )
@@ -127,14 +135,15 @@ def scan(
 
     if project.foreign_ci:
         _echo("", color=color)
-        _echo("🔎 foreign CI detected (not supported):", color=color, fg=typer.colors.BRIGHT_WHITE)
+        _echo("foreign CI detected (not supported):", color=color, fg=typer.colors.BRIGHT_WHITE)
         for f in project.foreign_ci:
             _echo(f"   {_SKIP} {f.relative_to(project.root)}", color=color, fg=typer.colors.YELLOW)
 
     if project.dockerfile:
         _echo("", color=color)
         _echo(
-            f"💡 {project.dockerfile.name} present → jobs without `cooked_on` will build it",
+            f"{SYMBOL_NOTE} {project.dockerfile.name} present -> "
+            "jobs without `cooked_on` will build it",
             color=color,
             fg=typer.colors.GREEN,
         )
