@@ -269,11 +269,18 @@ def _run_builtin(
     about artifacts — the step is skipped and says so.
     """
     if config.builtins is None:
+        _lifecycle_skip(config, name)
         _emit(config, name, META, f"skipped (not the vibe): no runner for `{plan.builtin}`")
         _conclude(config, step, Status.SKIPPED)
         return StepResult(step_name=name, status=Status.SKIPPED)
 
     started = time.monotonic()
+    # A built-in is a step like any other as far as a renderer is concerned.
+    # Without these the live tree creates the node on its first output line,
+    # marks it RUNNING, and never hears that it finished — so `checkout` sat
+    # under a spinner for the rest of the run while its result scrolled past
+    # above it.
+    _step_started(config, name)
     _emit(config, name, META, f"::group::{name}")
     ctx = BuiltinContext(
         root=config.root,
@@ -300,6 +307,7 @@ def _run_builtin(
     if not outcome.ok and outcome.message:
         _emit(config, name, META, outcome.message)
     _conclude(config, step, status)
+    _step_ended(config, name, status, time.monotonic() - started, 0 if outcome.ok else 1)
     return StepResult(
         step_name=name,
         status=status,
