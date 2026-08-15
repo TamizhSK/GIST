@@ -19,8 +19,9 @@ See docs/architecture.md
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -30,6 +31,7 @@ from yeet.core.events import FanOut
 from yeet.core.ir import Workflow
 from yeet.core.masking import Masker
 from yeet.core.project import Project
+from yeet.core.result import RunResult
 from yeet.executor.backend import Backend, DockerUnavailable
 from yeet.executor.docker_backend import DockerBackend
 from yeet.executor.images import ImageKind, ImageResolutionError, resolve_image
@@ -56,6 +58,14 @@ def run(
         list[str] | None, typer.Option("--secret", help="K=V, highest precedence.")
     ] = None,
     verbose: Annotated[bool, typer.Option("-v", "--verbose")] = False,
+    tui: Annotated[
+        bool,
+        typer.Option("--tui", help="Full-screen dashboard instead of streaming output."),
+    ] = False,
+    clean: Annotated[
+        bool,
+        typer.Option("--clean", help="Empty workspace; `actions/checkout` fills it, as on GitHub."),
+    ] = False,
 ) -> None:
     """Analyze -> validate -> plan -> execute -> report.
 
@@ -118,7 +128,9 @@ def run(
     # both halves of that were written independently and only wired together
     # here. A failing sink is counted, not raised: a full disk should cost the
     # log file, not the run.
-    console_sink = make_console(color=color_enabled(ctx), verbose=verbose)
+    console_sink = _console_for(
+        tui, workflow.display_name, color=color_enabled(ctx), verbose=verbose
+    )
     options = RunOptions(
         root=root,
         workflow_name=workflow.display_name,
@@ -130,6 +142,7 @@ def run(
         # built-in actions, the executor runs them, and the tier contract keeps
         # those two from importing each other. See `core/builtins.py`.
         builtins=run_builtin,
+        isolated=clean,
         sink=FanOut(sinks=[console_sink, RunStore(layout.root, layout.run_id)]),
         contexts=contexts,
         layout=layout,
@@ -141,7 +154,7 @@ def run(
     # closed before anything else touches the terminal, success or not.
     console_sink.start()
     try:
-        result = run_plan(plan, backend, options)
+        result = _execute(console_sink, plan, backend, options)
     except DockerUnavailable as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(EXIT_NO_DOCKER) from exc
@@ -159,6 +172,52 @@ def run(
 
 
 # --- stages ------------------------------------------------------------------
+
+
+def _execute(sink: Any, plan: ExecutionPlan, backend: Backend, options: RunOptions) -> RunResult:
+    """Run the plan, giving Textual the main thread when it is the renderer.
+
+    Textual installs signal handlers and so must own the main thread; the RUN
+    is what moves to a worker. Everything else — including the backend, which
+    registers the SIGINT container reaping — was built on the main thread
+    above and stays there.
+    """
+    from yeet.reporting.dashboard import DashboardSink, run_dashboard
+
+    if isinstance(sink, DashboardSink):
+        return run_dashboard(sink, lambda: run_plan(plan, backend, options))
+    return run_plan(plan, backend, options)
+
+
+def _console_for(tui: bool, workflow_name: str, *, color: bool, verbose: bool) -> Any:
+    """The dashboard when asked for and possible, the streaming pair otherwise.
+
+    `--tui` is a nicety and Textual is an OPTIONAL dependency, so a missing
+    install degrades to the normal renderer with one line saying why — a runner
+    that refuses to run because a display library is absent has failed at its
+    actual job. The same fallback covers a pipe: a full-screen app writing to
+    something that is not a terminal produces nothing a person can read.
+    """
+    if not tui:
+        return make_console(color=color, verbose=verbose)
+
+    from yeet.reporting import dashboard
+
+    if not dashboard.is_available():
+        typer.secho(
+            "--tui needs Textual: pip install textual. Using the streaming view.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+        return make_console(color=color, verbose=verbose)
+    if not sys.stdout.isatty():
+        typer.secho(
+            "--tui needs a terminal; this is a pipe. Using the streaming view.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+        return make_console(color=color, verbose=verbose)
+    return dashboard.DashboardSink(workflow_name=workflow_name, color=color)
 
 
 def _analyze(root: Path) -> Project:

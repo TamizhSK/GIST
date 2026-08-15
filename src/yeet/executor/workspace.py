@@ -74,6 +74,22 @@ class JobLayout:
     job_key: str
     dir: Path
 
+    @property
+    def isolated_workspace(self) -> Path:
+        """A private, empty workspace for this job — `yeet run --clean`.
+
+        GitHub hands a job an EMPTY directory and `actions/checkout` fills it.
+        Bind-mounting the user's working tree is the right default for a local
+        runner (you want to test what you are editing), but it hides two whole
+        classes of bug: a workflow with no `checkout` step at all, and one that
+        passes only because of a file you have not committed. This directory is
+        where the faithful version runs.
+
+        Per JOB, not per run: two jobs of a matrix must not write into one
+        checkout, exactly as they do not on GitHub.
+        """
+        return self.dir / "workspace"
+
     def step(self, index: int, suffix: str = ".sh") -> StepLayout:
         step_dir = self.dir / f"step-{index}"
         step_dir.mkdir(parents=True, exist_ok=True)

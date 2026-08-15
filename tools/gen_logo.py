@@ -58,62 +58,46 @@ OUT_TXT = Path(__file__).resolve().parents[1] / "assets" / "yeet.txt"
 # four hand-counted 59-character strings.
 
 GLYPHS: dict[str, list[str]] = {
-    # A terminal cell is about twice as tall as it is wide, so row and column
-    # counts are not proportions and cannot be eyeballed. The reference runs
-    # about 1.35 tall per unit wide, which at this cell shape is ~1.4 columns
-    # per row: twelve rows, seventeen columns.
+    # THE SAME LETTERS THE INSTALLER PRINTS. `install.sh`'s banner draws this
+    # art in ANSI; this draws it in SVG. They are duplicated rather than
+    # generated from one source because a POSIX sh script cannot import a
+    # Python module — but they must not drift, so `test_logo.py` asserts the
+    # rows here and the `printf` rows there are identical, character for
+    # character.
     #
-    # Weight is the other half of it. The strokes are SIX cells — a third of
-    # the letter's width — and the E's bars are three rows against two-row
-    # counters, because the reference is a display face where the ink outweighs
-    # the space inside it. Five-cell strokes on a 2-row/2-row E read as a text
-    # face blown up, which is what the previous pass looked like.
+    # Proportions are arithmetic, not taste. A terminal cell is about twice as
+    # tall as it is wide, so row and column counts are not proportions: the
+    # reference logo runs about 1.35 tall per unit wide, which at this cell
+    # shape is roughly 1.4 columns per row. Six rows, thirteen columns,
+    # four-cell strokes.
     "Y": [
-        "██████     ██████",
-        "██████     ██████",
-        " ██████   ██████ ",
-        " ██████   ██████ ",
-        "  ██████ ██████  ",
-        "   ███████████   ",
-        "     ██████      ",
-        "     ██████      ",
-        "     ██████      ",
-        "     ██████      ",
-        "     ██████      ",
-        "     ██████      ",
+        "████     ████",
+        " ████   ████ ",
+        "  ████ ████  ",
+        "   ███████   ",
+        "     ████    ",
+        "     ████    ",
     ],
     "E": [
-        "█████████████████",
-        "█████████████████",
-        "█████████████████",
-        "██████           ",
-        "██████           ",
-        "█████████████    ",
-        "█████████████    ",
-        "██████           ",
-        "██████           ",
-        "█████████████████",
-        "█████████████████",
-        "█████████████████",
+        "█████████",
+        "████     ",
+        "███████  ",
+        "███████  ",
+        "████     ",
+        "█████████",
     ],
     "T": [
-        "██████████████████",
-        "██████████████████",
-        "██████████████████",
-        "      ██████      ",
-        "      ██████      ",
-        "      ██████      ",
-        "      ██████      ",
-        "      ██████      ",
-        "      ██████      ",
-        "      ██████      ",
-        "      ██████      ",
-        "      ██████      ",
+        "█████████████",
+        "     ████    ",
+        "     ████    ",
+        "     ████    ",
+        "     ████    ",
+        "     ████    ",
     ],
 }
 
 WORD = "YEET"
-GAP = 2  # blank columns between letters — the reference sets them tight
+GAP = 2  # blank columns between letters — matches the installer banner
 
 ART = [
     (" " * GAP).join(GLYPHS[letter][row] for letter in WORD) for row in range(len(GLYPHS[WORD[0]]))
@@ -123,7 +107,7 @@ ART = [
 # thinning through the middle is what gives the strokes their rounded, tubular
 # look — it is the shading the original art drew by hand, lifted out so it can
 # be read (and adjusted) as the single ramp it always was.
-TEXTURE = ["█", "▓", "▒", "░", "▒", "▓", "█", "▓", "▒", "░", "▒", "█"]
+TEXTURE = ["█", "▓", "▒", "▒", "▓", "█"]
 
 SOLID = "█"  # a cell is part of a letter
 

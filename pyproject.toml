@@ -31,7 +31,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# `yeet run --tui`. Optional on purpose: a workflow runner that will not start
+# because a display library is missing has failed at its actual job, so the
+# CLI falls back to the streaming renderer with a line saying why.
+tui = ["textual>=0.80"]
 dev = [
+    "textual>=0.80",
+    "pytest-asyncio>=0.23",
     "pytest>=8.2",
     "pytest-cov",
     "ruff>=0.4",
@@ -48,6 +54,8 @@ packages = ["src/yeet"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The dashboard tests drive Textual's own async harness.
+asyncio_mode = "auto"
 markers = [
     "docker: needs a running Docker daemon",
     "slow: takes more than a second",

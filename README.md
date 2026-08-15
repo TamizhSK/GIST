@@ -1,4 +1,4 @@
-<img src="assets/yeet.svg" alt="yeet — run GitHub Actions workflows locally" width="520">
+<img src="assets/yeet.svg" alt="yeet — run GitHub Actions workflows locally" width="445">
 
 # yeet — run GitHub Actions workflows locally
 
@@ -53,6 +53,41 @@ git is optional too — without it the installer pulls a source tarball instead.
 Docker is optional — workflows with `cooked_on: local` run in your own shell,
 so you can go end-to-end before you ever install a daemon. To remove it:
 `yeet-uninstall`.
+
+## Watching a run
+
+`yeet run` streams: one line at a time, safe to pipe, safe to redirect, and it
+leaves the whole log in your scrollback. That is the default and it stays the
+default.
+
+`yeet run --tui` opens a full-screen dashboard instead — a job/step tree on the
+left, the running step's output on the right, `[f]` to follow the live step or
+click any step to pin it. Worth it when a matrix has eight legs and the
+streaming form interleaves eight jobs into one column.
+
+```
+  yeet  ·  CI
+ ▼ [OK] test (node 16)  2.4s     │ ── test (node 20) · run tests ──
+ ├── [OK] setup  1.1s            │ test 1 ok
+ └── > run tests                 │ a warning
+ ▼ [FAIL] test (node 18)  2.1s   │
+  2/3 jobs  ·  1 flopped  ·  following   [f] follow   [q] quit
+```
+
+Needs Textual (`pip install 'yeet[tui]'`). Without it — or into a pipe —
+`--tui` says so and falls back to the streaming view, because a runner that
+will not run because a display library is missing has failed at its actual job.
+
+## Reproducing GitHub exactly
+
+By default the container gets your working directory bind-mounted, so
+**uncommitted edits are what run**. That is the point of a local runner: you
+want to test what you are editing.
+
+`yeet run --clean` gives each job an empty workspace instead and lets
+`actions/checkout` fill it, exactly as GitHub does. That catches the two things
+the bind mount hides — a workflow with no `checkout` step at all, and one that
+only passes because of a file you have not committed yet.
 
 ## Secrets and variables, imported locally
 

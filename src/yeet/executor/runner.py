@@ -65,6 +65,10 @@ class RunOptions:
     """`storage.builtin.run_builtin`, passed down by `cmd_run`. See
     `core/builtins.py` for why it is injected rather than imported."""
     contexts: Contexts | None = None
+    isolated: bool = False
+    """`yeet run --clean`: give every job an empty workspace and make
+    `actions/checkout` fill it, the way GitHub does. See
+    `workspace.JobLayout.isolated_workspace`."""
     run_id: str = ""
     layout: RunLayout | None = None
 
@@ -141,8 +145,13 @@ def _run_wave(
         # another leg's matrix values. `for_instance` returns a fresh snapshot.
         contexts = for_instance(options.contexts, inst, upstream, state.job_of)
 
+        job_workspace = options.root
+        if options.isolated:
+            job_workspace = layout.job(inst.key).isolated_workspace
+            job_workspace.mkdir(parents=True, exist_ok=True)
+
         ctx = JobContext(
-            workspace=options.root,
+            workspace=job_workspace,
             env=_job_env(options, contexts),
             secrets=options.masker,
             sink=options.sink,

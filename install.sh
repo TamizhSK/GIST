@@ -88,12 +88,12 @@ banner() {
         return
     fi
     say ""
-    printf '  %s████     ████  ███████████  ███████████  █████████████%s\n' "${ESC}[${_BAND_1}m" "$N"
-    printf '  %s ████   ████   ████         ████              ████    %s\n' "${ESC}[${_BAND_2}m" "$N"
-    printf '  %s  ████ ████    █████████    █████████         ████    %s\n' "${ESC}[${_BAND_3}m" "$N"
-    printf '  %s   ███████     █████████    █████████         ████    %s\n' "${ESC}[${_BAND_4}m" "$N"
-    printf '  %s     ████      ████         ████              ████    %s\n' "${ESC}[${_BAND_5}m" "$N"
-    printf '  %s     ████      ███████████  ███████████       ████    %s\n' "${ESC}[${_BAND_6}m" "$N"
+    printf '  %s████     ████  █████████  █████████  █████████████%s\n' "${ESC}[${_BAND_1}m" "$N"
+    printf '  %s ████   ████   ████       ████            ████    %s\n' "${ESC}[${_BAND_2}m" "$N"
+    printf '  %s  ████ ████    ███████    ███████         ████    %s\n' "${ESC}[${_BAND_3}m" "$N"
+    printf '  %s   ███████     ███████    ███████         ████    %s\n' "${ESC}[${_BAND_4}m" "$N"
+    printf '  %s     ████      ████       ████            ████    %s\n' "${ESC}[${_BAND_5}m" "$N"
+    printf '  %s     ████      █████████  █████████       ████    %s\n' "${ESC}[${_BAND_6}m" "$N"
     printf '\n  %sa local GitHub Actions runner, with a dialect of its own%s\n\n' "$MUTE" "$N"
 }
 
