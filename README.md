@@ -98,25 +98,54 @@ takes the whole team.
 
 ## Install
 
-One line, on Linux, macOS, or WSL. It installs into its own isolated
-environment and puts `yeet` on your PATH — it never touches your system Python
-or any project's virtualenv.
+One line per platform. Each installs into its own isolated environment and puts
+`yeet` on your PATH — it never touches your system Python or any project's
+virtualenv.
+
+**Linux, macOS, WSL**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TamizhSK/GIST/main/install.sh | sh
 ```
 
-Prefer to read it first (you should):
+**Windows (PowerShell)**
+
+```powershell
+irm https://raw.githubusercontent.com/TamizhSK/GIST/main/install.ps1 | iex
+```
+
+If that is refused, your execution policy is doing its job. For one command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/TamizhSK/GIST/main/install.ps1 | iex"
+```
+
+Then, before anything else:
+
+```bash
+yeet doctor     # is this machine set up to run a workflow, and if not, what to fix
+```
+
+Prefer to read the script first (you should):
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/TamizhSK/GIST/main/install.sh
 less install.sh && sh install.sh
 ```
 
-Or install straight with [pipx](https://pipx.pypa.io):
+Pin a version, or install from a clone with no network:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TamizhSK/GIST/main/install.sh | sh -s -- --version v0.1.0
+./install.sh --local          # PowerShell: .\install.ps1 -Local
+```
+
+Or install straight with [pipx](https://pipx.pypa.io) or
+[uv](https://docs.astral.sh/uv/):
 
 ```bash
 pipx install git+https://github.com/TamizhSK/GIST
+uv tool install git+https://github.com/TamizhSK/GIST
 ```
 
 Needs **Python 3.10+** — or nothing at all: where
@@ -129,6 +158,9 @@ git is optional too — without it the installer pulls a source tarball instead.
 Docker is optional — workflows with `cooked_on: local` run in your own shell,
 so you can go end-to-end before you ever install a daemon. To remove it:
 `yeet-uninstall`.
+
+Neither installer needs `sudo` or an elevated prompt. On POSIX it writes to
+`~/.local/share/yeet` and `~/.local/bin`; on Windows, `%LOCALAPPDATA%\yeet`.
 
 ## Watching a run
 
@@ -217,8 +249,8 @@ syntax, and the whole suite is green:
 
 ```
 make check     six gates green (lint · format · imports · types · noprint · test)
-pytest         841 fast tests, plus 18 against a live Docker daemon
-mypy src       104 source files, strict
+pytest         985 fast tests, plus 18 against a live Docker daemon
+mypy src       107 source files, strict
 lint-imports   2 contracts kept, 0 broken
 ```
 
@@ -237,7 +269,7 @@ compatibility corpus — all validating clean.
   is, with diagrams.
 - [`docs/rules.md`](docs/rules.md) — every diagnostic code (generated from
   `core/codes.py`; never hand-edited).
-- [`plan.md`](plan.md) — the file-by-file ownership map.
+- [`docs/plan.md`](docs/plan.md) — the file-by-file ownership map.
 - [`docs/history/`](docs/history/) — the session-by-session build log.
 
 ## Development
@@ -256,5 +288,44 @@ make fix     # repairs what check complains about
 
 ## Non-goals
 
-See `docs/architecture.md` §9. We say no on purpose.
+We say no on purpose. The full list is in
+[`docs/architecture.md`](docs/architecture.md) §9; the ones people ask about
+most:
+
+- **Not a GitHub Actions replacement.** It runs your workflows locally so the
+  push is the second time you find out, not the first. GitHub is still the
+  thing that gates a merge.
+- **No hosted anything.** No service, no artifact server, no accounts. An
+  artifact is a file in `.yeet/artifacts/`, and `upload-artifact` deliberately
+  emits no `artifact-url`, because a plausible-looking dead link is worse than
+  a missing field.
+- **No sandbox around `runs-on: local`.** Those steps run in your shell, on
+  your machine, as you. That is the point of them, and it is why the default
+  is a container.
+- **Not every key.** `services:`, `concurrency:` and reusable workflows are
+  reported as unsupported rather than ignored — a workflow that ran
+  differently than you wrote it is worse than one that refused.
+- **Not a linter for other CI systems.** A `.gitlab-ci.yml` is recognised and
+  named, and then left alone.
+
+## Prior art
+
+[`nektos/act`](https://github.com/nektos/act) got here first and is the
+reference for what "run Actions locally" means; several of its hard-won
+behaviours — the runner-label to image mapping, the shape of the container
+lifecycle — are the obvious answers because act found them.
+[`actions/runner`](https://github.com/actions/runner) is the real thing, and it
+is the authority every fidelity question here was settled against.
+
+## About this project
+
+This is a **personal training project**, built by four people in a week. It is
+not a product of, affiliated with, or endorsed by any employer of any
+contributor, and nothing in this repository is anyone's work product but ours.
+Use it accordingly: it is pre-1.0, the CLI surface can still change, and the
+[non-goals](#non-goals) above are real limits rather than a roadmap.
+
+## License
+
+[MIT](LICENSE).
 
