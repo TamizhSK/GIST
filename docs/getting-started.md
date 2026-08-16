@@ -19,7 +19,7 @@ make check                                          # must be green before you s
 ```
 
 Day 0's mechanical work is done: the skeleton lints, type-checks, satisfies the
-tier contract and `yeet --help` runs. See [`../plan.md`](../plan.md) §0 for
+tier contract and `yeet --help` runs. See [`../plan.md`](plan.md) §0 for
 exactly what changed and [`adr/0007`](adr/0007-tier-rule-consequences.md) for the
 architectural consequences that this document's §1 tree predates.
 
