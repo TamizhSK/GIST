@@ -24,10 +24,11 @@ the real key and never against a lossy filename.
 from __future__ import annotations
 
 import hashlib
+import ntpath
 import re
 import tarfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from yeet.core.config import cache_dir
 
@@ -142,22 +143,58 @@ def _extract(tar_path: Path, dest: Path) -> None:
     extraction happily follows `../../..` out of `dest`. Python 3.12 warns
     about this and 3.14 changes the default; naming it here means the
     behaviour does not depend on which interpreter a user happens to run.
+
+    `filter=` landed in 3.9.17 / 3.10.12 / 3.11.4, and there are supported
+    interpreters below every one of those — `actions/setup-python` ships
+    3.10.11 as the newest 3.10 for macOS, because python.org stopped building
+    macOS installers after it. So the check is applied by hand there rather
+    than refused: the same rules, enforced by us.
     """
     dest.mkdir(parents=True, exist_ok=True)
     with tarfile.open(tar_path, "r") as tar:
         try:
             tar.extractall(path=dest, filter="data")
-        except TypeError as exc:
-            # The `filter` argument was backported to 3.9.17 / 3.10.12 /
-            # 3.11.4; an older patch release of a version we otherwise support
-            # raises TypeError here. Refuse rather than retry without it —
-            # falling back silently is how a security fix becomes optional, and
-            # a cache that will not restore is a far smaller problem than an
-            # archive that writes outside the workspace.
-            raise RuntimeError(
-                "this Python is too old to extract archives safely "
-                f"({exc}). Upgrade to 3.10.12+, 3.11.4+, or any 3.12+."
-            ) from exc
+        except TypeError:
+            _extract_checked(tar, dest)
+
+
+def _extract_checked(tar: tarfile.TarFile, dest: Path) -> None:
+    """`filter="data"`'s rules, for interpreters that do not have it.
+
+    Checked in full BEFORE anything is written. A bulk extract cannot reject
+    one entry — by the time the unsafe member is reached, the safe ones are
+    already on disk and the caller's `except` cannot undo them.
+    """
+    root = dest.resolve()
+    members = tar.getmembers()
+    for member in members:
+        _reject_unsafe(member, root)
+    for member in members:
+        member.mode &= 0o755  # drop setuid/setgid/sticky, as `data` does
+        tar.extract(member, path=dest)
+
+
+def _reject_unsafe(member: tarfile.TarInfo, root: Path) -> None:
+    """Raise unless `member` can only ever write inside `root`."""
+    if member.isdev():
+        raise tarfile.ExtractError(f"{member.name}: device files are not extracted")
+    _reject_escape(member.name, root, root, member.name)
+    if member.issym() or member.islnk():
+        # A symlink resolves against its own directory; a hard link against the
+        # archive root. Both targets have to land inside `root` too.
+        base = (root / member.name).parent if member.issym() else root
+        _reject_escape(member.linkname, base, root, member.name)
+
+
+def _reject_escape(name: str, base: Path, root: Path, member_name: str) -> None:
+    """`name`, read relative to `base`, must stay under `root`."""
+    target = PurePosixPath(name)
+    inside = not target.is_absolute() and not ntpath.isabs(name)
+    if inside:
+        resolved = (base / name).resolve()
+        inside = resolved == root or root in resolved.parents
+    if not inside:
+        raise tarfile.ExtractError(f"{member_name}: would extract outside the destination")
 
 
 def _arcname(path: Path, base: Path) -> str:

@@ -13,6 +13,8 @@ name so two `dist/` directories collided.
 
 from __future__ import annotations
 
+import io
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -222,8 +224,6 @@ def test_keys_that_slug_the_same_do_not_share_an_entry(tmp_path, monkeypatch, wo
 def test_extraction_refuses_to_escape_the_destination(tmp_path, monkeypatch, workspace):
     """A cache tarball is attacker-controlled the moment a cache directory is
     shared. `filter="data"` is what keeps `../../` inside the workspace."""
-    import tarfile
-
     monkeypatch.setattr(cache_mod, "cache_dir", lambda: tmp_path / "cachehome")
     store = tmp_path / "cachehome" / "cache"
     store.mkdir(parents=True)
@@ -239,6 +239,91 @@ def test_extraction_refuses_to_escape_the_destination(tmp_path, monkeypatch, wor
         cache_mod.restore_cache("evil", None, dest=dest)
 
     assert not (tmp_path / "escaped.txt").exists()
+
+
+# --- the hand-rolled `data` filter -------------------------------------------
+#
+# Reached only on 3.9.16- / 3.10.11- / 3.11.3-, which is not this interpreter
+# and is exactly why it needs its own tests: `setup-python` ships 3.10.11 as the
+# newest 3.10 for macOS, so the branch is live on a platform we support and dead
+# on the one we develop on. `no_filter_kwarg` makes it the branch taken here.
+
+
+@pytest.fixture
+def no_filter_kwarg(monkeypatch):
+    """`TarFile.extractall` as it was before the `filter=` backport."""
+    real = tarfile.TarFile.extractall
+
+    def old(self, path=".", members=None, *, numeric_owner=False):
+        return real(self, path, members, numeric_owner=numeric_owner)
+
+    monkeypatch.setattr(tarfile.TarFile, "extractall", old)
+
+
+def _tar_with(tar_path: Path, name: str, payload: bytes = b"pwned") -> None:
+    """`addfile`, not `add` — `add` normalises a leading `/` away, so the
+    absolute-path case would test something the archive no longer contains."""
+    info = tarfile.TarInfo(name)
+    info.size = len(payload)
+    with tarfile.open(tar_path, "w") as tar:
+        tar.addfile(info, io.BytesIO(payload))
+
+
+@pytest.mark.parametrize(
+    "arcname", ["../escaped.txt", "/etc/escaped.txt", "a/../../escaped.txt", "C:\\escaped.txt"]
+)
+def test_the_fallback_refuses_every_way_out_of_the_destination(tmp_path, no_filter_kwarg, arcname):
+    tar_path = tmp_path / "evil.tar"
+    _tar_with(tar_path, arcname)
+    dest = tmp_path / "dest"
+
+    with pytest.raises(tarfile.TarError):
+        cache_mod._extract(tar_path, dest)
+
+    assert not (tmp_path / "escaped.txt").exists()
+
+
+def test_the_fallback_refuses_a_symlink_pointing_out(tmp_path, no_filter_kwarg):
+    """The member itself is in bounds; its TARGET is not. Checking only the
+    name lets an archive drop a link to `/etc/passwd` into the workspace."""
+    tar_path = tmp_path / "link.tar"
+    with tarfile.open(tar_path, "w") as tar:
+        info = tarfile.TarInfo("inside/link")
+        info.type = tarfile.SYMTYPE
+        info.linkname = "../../../../etc/passwd"
+        tar.addfile(info)
+
+    with pytest.raises(tarfile.TarError):
+        cache_mod._extract(tar_path, tmp_path / "dest")
+
+
+def test_the_fallback_rejects_before_it_writes_anything(tmp_path, no_filter_kwarg):
+    """A safe member ahead of an unsafe one must not survive the refusal —
+    a half-restored cache is a cache the next step will trust."""
+    tar_path = tmp_path / "mixed.tar"
+    good = _write(tmp_path / "good.txt")
+    with tarfile.open(tar_path, "w") as tar:
+        tar.add(good, arcname="good.txt")
+        tar.add(good, arcname="../escaped.txt")
+    dest = tmp_path / "dest"
+
+    with pytest.raises(tarfile.TarError):
+        cache_mod._extract(tar_path, dest)
+
+    assert not (dest / "good.txt").exists()
+
+
+def test_the_fallback_still_restores_an_ordinary_cache(tmp_path, no_filter_kwarg, workspace):
+    """The refusals above are worthless if the branch cannot do its job."""
+    _write(workspace / "node_modules" / "dep" / "index.js", "module.exports = 1")
+    tar_path = tmp_path / "good.tar"
+    with tarfile.open(tar_path, "w") as tar:
+        tar.add(workspace / "node_modules", arcname="node_modules")
+    dest = tmp_path / "dest"
+
+    cache_mod._extract(tar_path, dest)
+
+    assert (dest / "node_modules" / "dep" / "index.js").read_text() == "module.exports = 1"
 
 
 # --- checkout ---------------------------------------------------------------
