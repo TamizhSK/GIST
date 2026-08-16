@@ -64,7 +64,7 @@ def _warn_if_legacy(root: Path) -> None:
 
 @secrets_app.command("set")
 def set_(key: Annotated[str, typer.Argument(help="Secret name.")]) -> None:
-    """Prompt for the value — never take it as an argv argument, shell history is forever."""
+    """Prompt for the value - never take it as an argv argument, shell history is forever."""
     root = Path.cwd()
     _warn_if_legacy(root)
 
@@ -135,7 +135,7 @@ def import_(
     """Collect the secrets and variables this project's workflows need into `.env`.
 
     Point yeet at a repo you just cloned and it can tell you exactly which
-    `${{ secrets.X }}` and `${{ vars.Y }}` its workflows read — that list is in
+    `${{ secrets.X }}` and `${{ vars.Y }}` its workflows read - that list is in
     the workflow files, and nowhere else, so it is the one thing a new
     contributor cannot guess. Every name found is written to `.env`, filled in
     from your current environment where a variable of that name is already
@@ -143,7 +143,7 @@ def import_(
 
     Values already in `.env` are never overwritten: this runs safely a second
     time after someone adds a workflow, and it will not clobber a token you
-    pasted in by hand. `.env` is in the generated `.gitignore` — check that
+    pasted in by hand. `.env` is in the generated `.gitignore` - check that
     before committing anything.
     """
     import os

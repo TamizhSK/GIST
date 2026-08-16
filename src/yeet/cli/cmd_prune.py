@@ -43,16 +43,16 @@ def prune(
 
     Scoped to the project by default. `yeet-local/*` images and `yeet-*`
     containers carry a project slug derived from the absolute path, so pruning
-    here cannot delete the image another checkout is about to use — or stop a
+    here cannot delete the image another checkout is about to use - or stop a
     container a run in another terminal is still writing to. `--all` sweeps
     everything this tool has ever built on the machine.
 
     `--actions` empties the cache of `uses: owner/repo@ref` checkouts. Opt-in
     rather than part of the default sweep, because refilling it needs the
-    network — the one thing in here that cannot be rebuilt offline — and it is
+    network - the one thing in here that cannot be rebuilt offline - and it is
     shared by every project on the machine rather than scoped to this one.
 
-    Never touches `.yeet/runs/` — those are the JSONL logs `yeet logs` replays,
+    Never touches `.yeet/runs/` - those are the JSONL logs `yeet logs` replays,
     and silently deleting a user's run history to reclaim a few kilobytes would
     be a poor trade.
     """

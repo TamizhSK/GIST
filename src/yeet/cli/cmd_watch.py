@@ -28,7 +28,7 @@ def watch(
     """Debounce 500ms, hold a per-project lock, ignore the dirs a run writes to.
 
     A broken workflow file prints its diagnostics and the daemon keeps waiting.
-    It must never crash — you leave this running in a second terminal all day.
+    It must never crash - you leave this running in a second terminal all day.
     """
     target = (path if path.exists() else Path.cwd()).resolve()
     color = color_enabled(ctx)

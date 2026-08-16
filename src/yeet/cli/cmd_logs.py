@@ -21,7 +21,7 @@ def logs(
 ) -> None:
     """Replays .yeet/runs/<run-id>/ through the same renderer a live run uses.
 
-    Which means the log format is exercised every time anyone uses this — that
+    Which means the log format is exercised every time anyone uses this - that
     is why it is worth building early rather than at the end.
     """
     root = Path.cwd()

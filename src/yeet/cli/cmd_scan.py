@@ -81,7 +81,7 @@ def scan(
     """What is this project, and what flows does it have?
 
     Pipeline stages 1 + 2 + 3 (validation layers 0-2 only, for speed).
-    Zero flows found is NOT an error — print the fingerprint and suggest
+    Zero flows found is NOT an error - print the fingerprint and suggest
     `yeet init --auto`. That is what makes "point it at any repo" true.
     """
     color = color_enabled(ctx)
