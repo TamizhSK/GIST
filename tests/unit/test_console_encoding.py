@@ -24,6 +24,7 @@ automated answers it.
 from __future__ import annotations
 
 import io
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -181,22 +182,29 @@ def _run_cli(*args: str, encoding: str) -> subprocess.CompletedProcess[bytes]:
     that broke. `:strict` because the default error handler would paper over
     exactly what is being tested.
     """
+    # Inherit and override, never replace. A hand-built env drops `SystemRoot`,
+    # without which Windows cannot seed the hash randomisation and the
+    # interpreter dies before `main()` — and `USERPROFILE`, without which
+    # `Path.home()` raises. Both were real CI failures, and neither had
+    # anything to do with encoding.
+    env = {
+        **os.environ,
+        "PYTHONIOENCODING": f"{encoding}:strict",
+        # Force Python OFF its UTF-8 default so the codec above is really
+        # the one used. Without this, PEP 540 mode can quietly win.
+        "PYTHONUTF8": "0",
+        "PYTHONPATH": str(ROOT / "src"),
+        "NO_COLOR": "1",
+        "TERM": "dumb",
+    }
+    env.pop("PYTHONWARNDEFAULTENCODING", None)
     return subprocess.run(
         [sys.executable, "-m", "yeet", *args],
         capture_output=True,
         cwd=ROOT,
         timeout=120,
         check=False,
-        env={
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "PYTHONIOENCODING": f"{encoding}:strict",
-            # Force Python OFF its UTF-8 default so the codec above is really
-            # the one used. Without this, PEP 540 mode can quietly win.
-            "PYTHONUTF8": "0",
-            "PYTHONPATH": str(ROOT / "src"),
-            "NO_COLOR": "1",
-            "TERM": "dumb",
-        },
+        env=env,
     )
 
 
@@ -206,8 +214,8 @@ def _run_cli(*args: str, encoding: str) -> subprocess.CompletedProcess[bytes]:
     [
         ("--help",),
         ("explain", "YEET-W402"),
-        ("check", "sample_project"),
-        ("scan", "sample_project"),
+        ("check", "tests/fixtures/sample_project"),
+        ("scan", "tests/fixtures/sample_project"),
         # The error path too, and deliberately: typer renders a `╭─ Error ─╮`
         # box for a bad flag, which is the most likely place for a stray
         # non-ASCII character to reach a console we did not choose.

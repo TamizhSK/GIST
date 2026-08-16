@@ -16,12 +16,27 @@ except ImportError:
     platformdirs = None  # type: ignore[assignment]
 
 
+def home_dir() -> Path | None:
+    """`$HOME`, or None when the environment does not say.
+
+    A git hook, cron and Task Scheduler all run with a stripped environment,
+    and `Path.home()` RAISES rather than guessing when neither `USERPROFILE`
+    nor `HOMEDRIVE`+`HOMEPATH` is set. Callers use home as a stopping point for
+    an upward walk, so None means "walk further" — not a traceback in front of
+    a user who ran `git commit`.
+    """
+    try:
+        return Path.home().resolve()
+    except (RuntimeError, OSError):
+        return None
+
+
 def config_dir() -> Path:
     """~/.config/yeet, %APPDATA%\\yeet, ~/Library/... — use platformdirs."""
     if platformdirs is not None:
         return Path(platformdirs.user_config_dir("yeet", appauthor=False))
     # Fallback if platformdirs unavailable
-    home = Path.home()
+    home = home_dir() or Path.cwd()
     if sys.platform == "win32":
         return home / "AppData" / "Roaming" / "yeet"
     return home / ".config" / "yeet"
@@ -33,7 +48,7 @@ def cache_dir() -> Path:
     """
     if platformdirs is not None:
         return Path(platformdirs.user_cache_dir("yeet", appauthor=False))
-    home = Path.home()
+    home = home_dir() or Path.cwd()
     if sys.platform == "win32":
         return home / "AppData" / "Local" / "yeet"
     return home / ".cache" / "yeet"

@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from yeet.analyzer.markers import EXTENSION_MARKERS, MARKERS
+from yeet.core.config import home_dir
 
 _PRIORITY_GIT = 4
 _PRIORITY_YEET = 3
@@ -28,7 +29,7 @@ def find_root(start: Path) -> Path:
     a directory with two files in it and no VCS must still resolve.
     """
     start = start.expanduser().resolve()
-    home = Path.home().resolve()
+    home = home_dir()  # None in a stripped env; then only the fs root stops us
     cur = start if start.is_dir() else start.parent
     best: tuple[int, Path] | None = None
     while True:

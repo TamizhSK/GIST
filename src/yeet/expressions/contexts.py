@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from yeet.core.config import home_dir
+
 _HEAD = re.compile(r"^ref:\s*(.+)$")
 _OWNER_REPO = re.compile(r"^[^:]+:(.+)$")  # scp-style: git@github.com:owner/repo.git
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -103,7 +105,7 @@ def _find_git_dir(start: Path) -> Path | None:
     personal config repo, not this project's repository.
     """
     here = start.resolve()
-    home = Path.home()
+    home = home_dir()  # None in a stripped env; then only the fs root stops us
     while here != here.parent and here != home:
         candidate = here / ".git"
         if candidate.is_dir():
