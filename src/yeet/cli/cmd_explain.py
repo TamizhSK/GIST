@@ -14,24 +14,35 @@ from typing import Annotated
 import typer
 
 from yeet.core import codes
+from yeet.core.resources import packaged_text
 
-#: `src/yeet/cli/cmd_explain.py` -> the repo's `docs/rules.md`.
-_RULES_DOC = Path(__file__).resolve().parents[3] / "docs" / "rules.md"
+#: The repo's copy, for a dev checkout where it may be newer than the build.
+_CHECKOUT_DOC = Path(__file__).resolve().parents[3] / "docs" / "rules.md"
+
+
+def _rules_doc() -> str | None:
+    """`rules.md`, from the checkout or from the wheel.
+
+    It ships inside the package now. Before that this command reached
+    `parents[3]/docs/`, which is the repo root from a checkout and the wrong
+    directory entirely from site-packages — so every installed user got the
+    two-line summary and a pointer to `make rules`, a command they had no
+    Makefile for.
+    """
+    if _CHECKOUT_DOC.is_file():
+        try:
+            return _CHECKOUT_DOC.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    return packaged_text("rules.md")
 
 
 def _section(code: str) -> str | None:
-    """The `### \\`YEET-E301\\` — ...` block, up to the next rule heading.
-
-    Returns None when the doc is not on disk — an installed wheel ships the
-    package and not the `docs/` tree — so the summary below is the fallback
-    rather than an error.
-    """
-    if not _RULES_DOC.is_file():
+    """The `### \\`YEET-E301\\` — ...` block, up to the next rule heading."""
+    doc = _rules_doc()
+    if doc is None:
         return None
-    try:
-        lines = _RULES_DOC.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return None
+    lines = doc.splitlines()
 
     heading = f"### `{code}`"
     out: list[str] = []
@@ -70,11 +81,9 @@ def explain(
         typer.echo(section)
         return
 
-    # `docs/rules.md` is not installed alongside the package; say the same
-    # things from the registry, which is where that document is generated from.
+    # Only reachable if the doc did not ship. Say the same things from the
+    # registry, which is where that document is generated from anyway.
     typer.echo(f"{rule.code} - {rule.title}")
     typer.echo("")
     typer.echo(f"  Default severity: {rule.default_severity.value}")
     typer.echo(f"  Pipeline layer:   {rule.layer}")
-    typer.echo("")
-    typer.echo("Full docs: docs/rules.md (run `make rules` to regenerate).")

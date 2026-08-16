@@ -19,6 +19,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from yeet.core.resources import packaged_path
 from yeet.executor.backend import DockerFailure, daemon_is_gone
 from yeet.executor.images import BASE_IMAGE, ImageSpec
 
@@ -271,27 +272,27 @@ def ensure_pulled(client: Any, reference: str, notify: Callable[[str], None] | N
 def find_base_dockerfile(start: Path | None = None) -> Path | None:
     """Locate `Dockerfile.base`.
 
-    Order: an explicit `$YEET_BASE_DOCKERFILE`, then the installed package's
-    project root (a dev checkout), then upwards from `start`. Returns None when
-    there is nothing to build, and the caller turns that into a message telling
-    the user the exact command to run.
+    Order: an explicit `$YEET_BASE_DOCKERFILE`, then upwards from `start` (a
+    dev checkout), then the copy inside the package. Returns None only when
+    even that is missing, and the caller turns it into a message naming the
+    exact command to run.
+
+    The packaged copy is LAST so a checkout's edited Dockerfile still wins —
+    but it exists, which the `__file__`-relative lookup here did not: it
+    counted `..` up to the repo root and landed beside site-packages, so every
+    installed user got "run `make image`" for a project they never cloned.
     """
     override = os.environ.get(BASE_DOCKERFILE_ENV)
     if override:
         candidate = Path(override)
         return candidate if candidate.is_file() else None
 
-    # src/yeet/executor/build.py -> src/yeet -> src -> <project root>
-    packaged = Path(__file__).resolve().parents[3] / BASE_DOCKERFILE
-    if packaged.is_file():
-        return packaged
-
     current = (start or Path.cwd()).resolve()
     for directory in (current, *current.parents):
         candidate = directory / BASE_DOCKERFILE
         if candidate.is_file():
             return candidate
-    return None
+    return packaged_path(BASE_DOCKERFILE)
 
 
 def ensure_base_image(client: Any, *, start: Path | None = None) -> str:

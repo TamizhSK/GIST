@@ -4,8 +4,30 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yeet"
-version = "0.1.0"
+# Single-sourced from `src/yeet/__init__.py`. It was declared in both places,
+# which is one release away from a wheel whose `--version` disagrees with its
+# filename.
+dynamic = ["version"]
 description = "A local GitHub Actions-compatible runner with a dialect of its own"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "The yeet contributors" }]
+keywords = ["github-actions", "ci", "workflow", "docker", "local", "runner"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Testing",
+]
 requires-python = ">=3.10"
 # 3.10, not 3.11, because that is what Ubuntu 22.04 LTS ships — and therefore
 # what a great many WSL installs have by default. Requiring 3.11 meant the
@@ -30,6 +52,12 @@ dependencies = [
     'tomli>=2.0; python_version < "3.11"',
 ]
 
+[project.urls]
+Homepage = "https://github.com/TamizhSK/GIST"
+Repository = "https://github.com/TamizhSK/GIST"
+Issues = "https://github.com/TamizhSK/GIST/issues"
+Changelog = "https://github.com/TamizhSK/GIST/releases"
+
 [project.optional-dependencies]
 # `yeet run --tui`. Optional on purpose: a workflow runner that will not start
 # because a display library is missing has failed at its actual job, so the
@@ -49,8 +77,18 @@ dev = [
 [project.scripts]
 yeet = "yeet.cli.app:main"
 
+[tool.hatch.version]
+path = "src/yeet/__init__.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/yeet"]
+
+# Two repo-root files are needed at RUN time, not just in a checkout.
+# Force-included rather than copied into src/, so there is exactly one of each
+# and `make image` and an installed `yeet run` build the same base image.
+[tool.hatch.build.targets.wheel.force-include]
+"Dockerfile.base" = "yeet/_data/Dockerfile.base"
+"docs/rules.md" = "yeet/_data/rules.md"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
