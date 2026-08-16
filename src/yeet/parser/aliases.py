@@ -24,6 +24,56 @@ _EXCLUDED_KEYS = frozenset({"manual"})
 _ALIASES: dict[str, str] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _Scope:
+    """One position in a workflow, and what its keys mean there.
+
+    `rewrite`: are this mapping's keys SCHEMA keys, or user data? Job IDs,
+    env var names, matrix variables and action inputs are all user data sitting
+    at key position, and rewriting them is a silent mistranslation — the one
+    failure mode a local runner must never have.
+
+    `children`: canonical key -> the scope its value opens. Everything absent
+    is `opaque`, so a new schema key defaults to "do not touch", which is the
+    safe direction to be wrong in.
+    """
+
+    rewrite: bool
+    children: dict[str, str]
+
+
+#: Only these positions hold schema keys. `matrix:`, `with:`, `env:`,
+#: `secrets:`, `outputs:`, `on:` and `permissions:` are reached through the
+#: `opaque` default and are left exactly as the user wrote them.
+_SCOPES: dict[str, _Scope] = {
+    "opaque": _Scope(rewrite=False, children={}),
+    "workflow": _Scope(rewrite=True, children={"jobs": "jobs", "defaults": "defaults"}),
+    # Keys here are job IDs. A job called `after` must stay called `after`.
+    "jobs": _Scope(rewrite=False, children={}),
+    "job": _Scope(
+        rewrite=True,
+        children={
+            "strategy": "strategy",
+            "steps": "step",
+            "container": "container",
+            "services": "services",
+            "defaults": "defaults",
+        },
+    ),
+    "step": _Scope(rewrite=True, children={}),
+    "strategy": _Scope(rewrite=True, children={}),
+    "container": _Scope(rewrite=True, children={}),
+    # Keys here are service IDs; each value is a container.
+    "services": _Scope(rewrite=False, children={}),
+    "defaults": _Scope(rewrite=True, children={"run": "defaults_run"}),
+    "defaults_run": _Scope(rewrite=True, children={}),
+}
+
+#: What an unlisted child of a user-keyed mapping opens. `jobs` -> `job`,
+#: `services` -> `container`; everything else stays opaque.
+_ELEMENT_SCOPE = {"jobs": "job", "services": "container"}
+
+
 def _load_aliases() -> dict[str, str]:
     """Load aliases.yml once. Never fails — a broken table must not take down
     the parser with it."""
@@ -86,23 +136,30 @@ def find_collisions(node: Any) -> list[Collision]:
     return found
 
 
-def _collect_collisions(node: Any, aliases: dict[str, str], found: list[Collision]) -> None:
-    if isinstance(node, CommentedMap):
+def _collect_collisions(
+    node: Any, aliases: dict[str, str], found: list[Collision], scope: str = "workflow"
+) -> None:
+    """The same walk `_rewrite` takes, so the two cannot disagree about where a
+    key is a key. `with: {name: a, vibe: b}` is two action inputs, not a
+    collision, and reporting it as one would refuse a valid workflow."""
+    if isinstance(node, list):
+        for item in node:
+            _collect_collisions(item, aliases, found, scope)
+        return
+    if not isinstance(node, CommentedMap):
+        return
+    here = _SCOPES.get(scope, _SCOPES["opaque"])
+    if here.rewrite:
         by_target: dict[str, list[str]] = {}
         for key in node:
-            if not isinstance(key, str):
-                continue
-            by_target.setdefault(aliases.get(key, key), []).append(key)
+            if isinstance(key, str):
+                by_target.setdefault(aliases.get(key, key), []).append(key)
         for canonical, spellings in by_target.items():
             if len(spellings) > 1:
                 line, col = _key_pos(node, spellings[-1])
                 found.append(Collision(canonical, tuple(spellings), line, col))
-        for value in node.values():
-            _collect_collisions(value, aliases, found)
-        return
-    if isinstance(node, list):
-        for item in node:
-            _collect_collisions(item, aliases, found)
+    for key, value in node.items():
+        _collect_collisions(value, aliases, found, _child_scope(here, scope, key, aliases))
 
 
 def _key_pos(mapping: CommentedMap, key: str) -> tuple[int, int]:
@@ -120,8 +177,13 @@ def normalize(node: Any) -> tuple[Any, bool]:
     Preserves ruamel position data — rewrite keys in place, do NOT rebuild the
     mappings naively or every diagnostic downstream loses its line number.
 
-    This function never fails and never warns: it is a pure key rewrite, which
-    is exactly why a real .github/workflows file passes through unchanged.
+    Rewrites ONLY at the positions where a key is a schema key. `with:`,
+    `env:`, `matrix:`, `secrets:`, `outputs:` and the job IDs under `jobs:`
+    hold user data at key position, and a blind walk rewrote those too: a
+    canonical GitHub Actions file with an input named `when:` came out with
+    `on:`, ran differently than it was written, and reported itself as dialect.
+    `_SCOPES` is the map of where the rewrite is allowed to look.
+
     `manual` -> `workflow_dispatch` is an event *value*, not a key — the
     builder handles it, not this pass.
     """
@@ -129,25 +191,33 @@ def normalize(node: Any) -> tuple[Any, bool]:
     return node, _rewrite(node, aliases)
 
 
-def _rewrite(node: Any, aliases: dict[str, str]) -> bool:
+def _rewrite(node: Any, aliases: dict[str, str], scope: str = "workflow") -> bool:
     """Rewrite keys in place; return True if any alias was applied."""
-    if isinstance(node, CommentedMap):
-        used = False
+    if isinstance(node, list):
+        return any([_rewrite(item, aliases, scope) for item in node])
+    if not isinstance(node, CommentedMap):
+        return False
+    here = _SCOPES.get(scope, _SCOPES["opaque"])
+    used = False
+    if here.rewrite:
         for key in list(node.keys()):
             if isinstance(key, str) and key in aliases:
                 rename_key(node, key, aliases[key])
                 used = True
-        for value in node.values():
-            if _rewrite(value, aliases):
-                used = True
-        return used
-    if isinstance(node, list):
-        used = False
-        for item in node:
-            if _rewrite(item, aliases):
-                used = True
-        return used
-    return False
+    # After the rename, so children are looked up by their canonical name.
+    for key, value in node.items():
+        if _rewrite(value, aliases, _child_scope(here, scope, key, aliases)):
+            used = True
+    return used
+
+
+def _child_scope(here: _Scope, scope: str, key: Any, aliases: dict[str, str]) -> str:
+    """The scope `key`'s value opens, from inside `scope`."""
+    if not here.rewrite:
+        return _ELEMENT_SCOPE.get(scope, "opaque")
+    if not isinstance(key, str):
+        return "opaque"
+    return here.children.get(aliases.get(key, key), "opaque")
 
 
 def rename_key(mapping: CommentedMap, old: Any, new: str) -> None:
