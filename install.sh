@@ -12,6 +12,11 @@
 # POSIX sh on purpose: /bin/sh is dash on Debian and Ubuntu (so also on most of
 # WSL), and bashisms here would fail on exactly the machines this targets.
 #
+# Options (after `--` when piped:  ... | sh -s -- --version v0.1.0):
+#   --version <ref>   install a tag, branch or commit instead of main
+#   --local           install from THIS clone, no network fetch of the source
+#   --help
+#
 # Environment:
 #   YEET_REPO      git URL to install from      (default: the GitHub repo)
 #   YEET_REF       branch, tag or commit        (default: main)
@@ -28,6 +33,40 @@ BIN_DIR="${YEET_BIN_DIR:-$HOME/.local/bin}"
 MIN_MINOR=10
 MAX_TESTED=13   # the newest minor the CI matrix actually runs
 TOTAL_STEPS=4
+LOCAL_DIR=''
+
+usage() {
+    cat <<'USAGE'
+yeet installer
+
+  curl -fsSL https://raw.githubusercontent.com/TamizhSK/GIST/main/install.sh | sh
+
+Options:
+  --version <ref>   a tag, branch or commit (default: main)
+  --local           install from the clone this script sits in
+  --help            this text
+USAGE
+}
+
+# Reproducibility and demo insurance. Pinning a version is the difference
+# between "install yeet" and "install the same yeet the docs describe", and
+# `--local` is the path that still works when the venue's wifi does not.
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --version) [ $# -ge 2 ] || { usage >&2; exit 2; }; REF="$2"; shift 2 ;;
+        --version=*) REF="${1#--version=}"; shift ;;
+        --local)
+            # `dirname "$0"` is meaningless under `curl | sh` — $0 is `sh`.
+            case "$0" in
+                */*) LOCAL_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd) ;;
+                *)   printf '%s\n' "--local needs the script on disk: clone, then ./install.sh --local" >&2
+                     exit 2 ;;
+            esac
+            shift ;;
+        --help|-h) usage; exit 0 ;;
+        *) printf 'unknown option: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
+    esac
+done
 
 # ── presentation ──────────────────────────────────────────────────────────────
 # Two independent questions, and conflating them is the usual bug: "may I use
@@ -205,7 +244,11 @@ fi
 # not, and GitHub serves one for every branch and tag. That matters on the
 # machines this script is most likely to meet: a slim container image, or a
 # corporate box where installing git is a ticket rather than a command.
-if command -v git >/dev/null 2>&1; then
+if [ -n "$LOCAL_DIR" ]; then
+    [ -f "$LOCAL_DIR/pyproject.toml" ] || die "--local: no pyproject.toml in $LOCAL_DIR"
+    SOURCE="$LOCAL_DIR"
+    ok "installing from this clone ${MUTE}($LOCAL_DIR)${N}"
+elif command -v git >/dev/null 2>&1; then
     SOURCE="git+$REPO@$REF"
     ok "git $(git --version 2>/dev/null | awk '{print $3}')"
 else
@@ -274,7 +317,9 @@ if [ -n "$INSTALL_FAILED" ]; then
     sed 's/^/      /' "$HOME_DIR/install.log" >&2 2>/dev/null || true
     die "the install failed. The full log is at $HOME_DIR/install.log"
 fi
-ok "$("$HOME_DIR/venv/bin/yeet" --version 2>/dev/null || echo yeet)"
+# `head -1`: `yeet --version` reports the interpreter, the OS and Docker under
+# the version line now, and all four inside one `ok` bullet reads as a fault.
+ok "$("$HOME_DIR/venv/bin/yeet" --version 2>/dev/null | head -1 || echo yeet)"
 
 # ── 4. a launcher on PATH ─────────────────────────────────────────────────────
 # A tiny exec shim rather than a symlink: a symlink into the venv works, but a
