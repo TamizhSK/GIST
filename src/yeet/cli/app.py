@@ -19,6 +19,7 @@ import typer
 from yeet import __version__
 from yeet.cli import (
     cmd_check,
+    cmd_doctor,
     cmd_explain,
     cmd_graph,
     cmd_hooks,
@@ -34,7 +35,9 @@ from yeet.cli import (
 app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
-    help="A local, GitHub Actions-compatible workflow runner — with a dialect of its own.",
+    # ASCII, like every other string this prints. `--help` is the first thing
+    # a Windows user runs and cp437 has no em dash.
+    help="A local, GitHub Actions-compatible workflow runner - with a dialect of its own.",
 )
 
 # --- subcommand registrations: one line each, append at the end --------------
@@ -49,6 +52,7 @@ app.command("watch")(cmd_watch.watch)
 app.command("prune")(cmd_prune.prune)
 app.add_typer(cmd_hooks.hooks_app, name="hooks")
 app.add_typer(cmd_secrets.secrets_app, name="secrets")
+app.command("doctor")(cmd_doctor.doctor)
 # ----------------------------------------------------------------------------
 
 
@@ -61,9 +65,45 @@ def _root(
     ),
 ) -> None:
     if version:
-        typer.echo(f"yeet {__version__}")
+        for line in _version_lines():
+            typer.echo(line)
         raise typer.Exit(0)
     ctx.obj = {"no_color": no_color}
+
+
+def _version_lines() -> list[str]:
+    """Version, interpreter, OS, and whether Docker answered.
+
+    Four lines rather than one because this is what gets pasted into an issue,
+    and the three follow-up questions were always the same three.
+    """
+    import platform
+
+    from yeet.executor.platform_ import is_wsl, runner_arch
+
+    system = f"{platform.system()} {platform.release()} ({runner_arch()})"
+    if is_wsl():
+        system += " [WSL]"
+    return [
+        f"yeet {__version__}",
+        f"python {platform.python_version()} ({sys.executable})",
+        f"os     {system}",
+        f"docker {_docker_line()}",
+    ]
+
+
+def _docker_line() -> str:
+    """Reachable or not, in one line. Never raises and never takes long —
+    `--version` is also what a script calls to check the tool is installed."""
+    try:
+        from yeet.executor.backend import DockerUnavailable, get_docker_client
+
+        client = get_docker_client()
+        return str(client.version().get("Version", "reachable"))
+    except DockerUnavailable as exc:
+        return f"not available ({exc})"
+    except Exception:  # noqa: BLE001 - a version banner must never fail
+        return "not available"
 
 
 def main() -> None:
