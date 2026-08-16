@@ -1,0 +1,60 @@
+name: Release
+
+# Tag, push the tag, and the release builds itself:
+#
+#   git tag -a v0.1.0 -m "..." && git push origin v0.1.0
+#
+# The wheel and sdist are attached to the GitHub release, which is what makes
+# `install.sh --version v0.1.0` reproducible and what gives a user a plain file
+# to download when they have no git. `undone.md` has had "a git-less install"
+# open since session 9; this is the half that was missing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check --strict dist/*
+
+      - name: the tag and the version agree
+        # A tag that disagrees with `__version__` produces a release whose
+        # filename and whose `--version` say different things, and nobody
+        # notices until an issue quotes one of them.
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          built=$(ls dist/*.whl | sed -E 's/.*yeet-([^-]+)-.*/\1/')
+          if [ "$tag" != "$built" ]; then
+            echo "tag $GITHUB_REF_NAME does not match the built version $built" >&2
+            echo "update __version__ in src/yeet/__init__.py, or retag" >&2
+            exit 1
+          fi
+
+      - name: it installs from the artifact, not from the checkout
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/rel && cd /tmp
+          /tmp/rel/bin/pip install --quiet "$GITHUB_WORKSPACE"/dist/*.whl
+          /tmp/rel/bin/yeet --version
+          /tmp/rel/bin/yeet explain YEET-E301 | grep -q "Layer:"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+          generate_release_notes: true
+          draft: true   # review it, then publish — a release cannot be edited back
