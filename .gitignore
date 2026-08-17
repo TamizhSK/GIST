@@ -1,1 +1,28 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.import_linter_cache/
+.coverage
+htmlcov/
+
+# yeet runtime state — never commit
+.yeet/tmp/
+.yeet/runs/
+.yeet/artifacts/
+.yeet/.secrets
+.yeet/.secrets.key
+
+# `yeet secrets import` writes tokens here in the clear.
+.env
+.env.*
+!.env.example
+
+# macOS
 .DS_Store

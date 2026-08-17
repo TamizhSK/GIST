@@ -1,0 +1,12 @@
+# W318 — `sha` is declared and nothing downstream reads it. A warning: a
+# workflow under construction may legitimately declare an output first.
+name: unused output
+on: [push]
+jobs:
+  build:
+    runs-on: local
+    outputs:
+      sha: ${{ steps.rev.outputs.value }}
+    steps:
+      - id: rev
+        run: echo "value=abc" >> "$GITHUB_OUTPUT"

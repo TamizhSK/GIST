@@ -1,0 +1,9 @@
+# E308 — a remote action must be pinned with `@`. Whether it resolves is
+# E313's question; this is about the shape.
+name: bad action reference
+on: [push]
+jobs:
+  build:
+    runs-on: local
+    steps:
+      - uses: actions/checkout

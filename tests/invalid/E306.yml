@@ -1,0 +1,10 @@
+# E306 — docker repository names are lowercase; the daemon rejects this one,
+# which is a confusing place to find out.
+name: bad container image
+on: [push]
+jobs:
+  build:
+    runs-on: local
+    container: Ubuntu:22.04
+    steps:
+      - run: echo hi

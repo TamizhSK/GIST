@@ -13,11 +13,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.11", "3.12"]
+        python: ["3.10", "3.11", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: yeet
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -35,14 +32,167 @@ jobs:
       - run: python tools/check_no_print.py src
       - run: pytest -m "not docker" --cov=yeet
 
+  packaging:
+    # Everything above runs against an EDITABLE install, where the repo is on
+    # disk and every data file is reachable whether or not it was packaged.
+    # That is the one configuration no released user is ever in, and it hid two
+    # bugs: `yeet explain` and `yeet run` both located files by counting `..`
+    # from `__file__`, which lands beside site-packages once installed. Build
+    # the artifact, install it somewhere with no repo above it, and use it.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+
+      - name: the metadata PyPI will reject
+        run: twine check --strict dist/*
+
+      - name: the data files are actually in the wheel
+        shell: python
+        run: |
+          import glob, zipfile
+          names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
+          for wanted in (
+              "yeet/parser/aliases.yml",
+              "yeet/parser/schema/workflow.schema.json",
+              "yeet/_data/Dockerfile.base",
+              "yeet/_data/rules.md",
+          ):
+              assert wanted in names, f"{wanted} is missing from the wheel"
+
+      - name: install it where there is no repo to fall back on
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/elsewhere"
+          python -m venv "$RUNNER_TEMP/venv"
+          if [ -d "$RUNNER_TEMP/venv/Scripts" ]; then BIN=Scripts; else BIN=bin; fi
+          echo "VENV_BIN=$RUNNER_TEMP/venv/$BIN" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/venv/$BIN/python" -m pip install --quiet dist/*.whl
+
+      - name: and the commands that read those files work from it
+        shell: bash
+        working-directory: ${{ runner.temp }}/elsewhere
+        run: |
+          set -euo pipefail
+          "$VENV_BIN/yeet" --version
+          # The stub answer is two lines and no `**Layer:**`; the real section
+          # comes from the packaged rules.md. Assert on the real one.
+          "$VENV_BIN/yeet" explain YEET-E301 | tee out.txt
+          grep -q "Layer:" out.txt
+          "$VENV_BIN/python" -c "
+          from yeet.executor.build import find_base_dockerfile
+          found = find_base_dockerfile()
+          assert found is not None, 'Dockerfile.base is unreachable from an install'
+          print(found)"
+
+  installer-windows:
+    # install.ps1 has no other test. A syntax error in it is invisible to every
+    # gate in this file and visible to the first Windows user who pastes the
+    # one-liner.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: it parses (Windows PowerShell 5.1 and PowerShell 7)
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Host $_ }; exit 1 }
+
+      - name: PSScriptAnalyzer, errors only
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -ErrorAction Stop
+          $found = Invoke-ScriptAnalyzer -Path install.ps1 -Severity Error
+          if ($found) { $found | Format-Table -AutoSize | Out-String | Write-Host; exit 1 }
+
+      - name: and it installs, from this clone, with no admin prompt
+        shell: powershell   # 5.1 on purpose: the default on a stock box
+        env:
+          YEET_NO_MODIFY_PATH: "1"
+        run: |
+          # No flag: a script sitting in a clone installs that clone.
+          .\install.ps1
+          & "$env:LOCALAPPDATA\yeet\bin\yeet.cmd" --version
+          & "$env:LOCALAPPDATA\yeet\bin\yeet.cmd" doctor
+
+      - name: twice, without duplicating anything
+        shell: powershell
+        env:
+          YEET_NO_MODIFY_PATH: "1"
+        run: |
+          .\install.ps1 -Local   # idempotent, and the explicit spelling
+          & "$env:LOCALAPPDATA\yeet\bin\yeet.cmd" --version
+
+  installer-posix:
+    # The three Linux variants a naive installer breaks on, plus macOS.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, image: "ubuntu:22.04", setup: "apt-get update && apt-get install -y python3 python3-venv" }
+          - { os: ubuntu-latest, image: "alpine:3.20", setup: "apk add --no-cache python3 bash" }
+          - { os: macos-latest, image: "", setup: "" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck and a syntax pass
+        if: matrix.image == ''
+        run: sh -n install.sh
+
+      - name: install into a clean container
+        if: matrix.image != ''
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src ${{ matrix.image }} sh -c \
+            "${{ matrix.setup }} && ./install.sh && ~/.local/bin/yeet --version"
+
+      - name: install on the host
+        if: matrix.image == ''
+        env:
+          YEET_NO_MODIFY_PATH: "1"
+        run: |
+          # No flag: a script sitting in a clone installs that clone. This is
+          # the form every contributor actually types, so it is the one CI
+          # runs — `--local` below only proves the explicit spelling still works.
+          ./install.sh
+          ~/.local/bin/yeet --version
+          ./install.sh --local   # idempotent, and the explicit spelling
+          ~/.local/bin/yeet doctor || true   # no Docker on the macOS runner
+
+      - name: a copy outside a clone still installs from GitHub
+        if: matrix.image == ''
+        env:
+          YEET_NO_MODIFY_PATH: "1"
+        run: |
+          # Auto-detection must key off yeet's own pyproject.toml, or the
+          # installer would install whatever project it was copied into.
+          mkdir -p /tmp/not-a-clone
+          cp install.sh /tmp/not-a-clone/
+          printf '[project]\nname = "somebody-elses-thing"\n' > /tmp/not-a-clone/pyproject.toml
+          /tmp/not-a-clone/install.sh 2>&1 | tee /tmp/out.txt
+          if grep -q 'installing from this clone' /tmp/out.txt; then
+            echo "::error::auto-detection claimed a clone that is not yeet"
+            exit 1
+          fi
+          ~/.local/bin/yeet --version
+
   rules-doc:
     # docs/rules.md is generated from core/codes.py. Regenerate and diff, so a
     # new code without `make rules` is a red build instead of a doc that quietly
     # disagrees with what `yeet explain` prints.
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: yeet
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -53,14 +203,63 @@ jobs:
       - name: docs/rules.md is up to date
         run: git diff --exit-code -- docs/rules.md
 
+  windows-console:
+    # The one thing a Mac or a Linux box cannot exercise. `tests/unit/
+    # test_console_encoding.py` builds real cp1252 streams and is the identical
+    # encoder Windows uses, so it runs everywhere in `make check` — but the
+    # Windows CONSOLE is a different subsystem. Modern Python writes to a real
+    # console through WriteConsoleW and bypasses the codepage entirely, so the
+    # two cases where a codepage still decides are REDIRECTED output and
+    # `PYTHONLEGACYWINDOWSSTDIO`. Both are below. This existed as a line in
+    # undone.md saying Windows was "verified by CI only", which was true of the
+    # test suite and had never been true of the console.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+
+      - name: the encoding tests, on Windows
+        run: pytest tests/unit/test_console_encoding.py tests/unit/test_ascii_output.py -q
+
+      - name: redirected output under the ANSI codepage
+        shell: cmd
+        # `chcp 1252` sets the console codepage; the redirect is what makes it
+        # apply. PYTHONUTF8=0 keeps PEP 540 from quietly making this a UTF-8
+        # run and testing nothing at all.
+        env:
+          PYTHONUTF8: "0"
+        run: |
+          chcp 1252
+          yeet --help > out.txt 2>&1 || exit /b 1
+          yeet explain YEET-W402 >> out.txt 2>&1 || exit /b 1
+          yeet check tests\fixtures\sample_project >> out.txt 2>&1
+          findstr /C:"UnicodeEncodeError" out.txt && exit /b 1
+          findstr /C:"Traceback" out.txt && exit /b 1
+          exit /b 0
+
+      - name: the legacy console, codepage and all
+        shell: cmd
+        # PYTHONLEGACYWINDOWSSTDIO puts stdout back on the codepage even when
+        # it IS a real console — the configuration where a box character is a
+        # hard error rather than a font question.
+        env:
+          PYTHONUTF8: "0"
+          PYTHONLEGACYWINDOWSSTDIO: "1"
+        run: |
+          chcp 437
+          yeet --help > legacy.txt 2>&1 || exit /b 1
+          yeet check tests\fixtures\sample_project >> legacy.txt 2>&1
+          findstr /C:"UnicodeEncodeError" legacy.txt && exit /b 1
+          exit /b 0
+
   docker:
     # The 18 container tests never ran in CI, so a regression in
     # docker_backend.py — the highest-risk file in the repo — landed green.
     # ubuntu-latest ships a working daemon, so this costs a couple of minutes.
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: yeet
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

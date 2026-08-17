@@ -1,0 +1,9 @@
+# E316 — a runner label with whitespace in it is unusable at any tier. An
+# unrecognised-but-well-formed label is E315 at run time, not an error here.
+name: unusable runs-on
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu latest
+    steps:
+      - run: echo hi

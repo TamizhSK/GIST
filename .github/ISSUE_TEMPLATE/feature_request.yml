@@ -1,0 +1,43 @@
+name: Feature request
+description: Something yeet should do and does not.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What are you trying to do, and where does yeet stop you? Describe the
+        situation rather than the fix — the fix is the easy part to disagree
+        about later.
+    validations:
+      required: true
+
+  - type: input
+    id: github-behaviour
+    attributes:
+      label: What GitHub Actions does here
+      description: >
+        If this is a GitHub Actions feature, link its documentation. Fidelity
+        to real Actions behaviour outranks everything else on the roadmap.
+    validations:
+      required: false
+
+  - type: textarea
+    id: workflow
+    attributes:
+      label: A workflow that would use it
+      render: yaml
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Before filing
+      options:
+        - label: I checked `yeet --help` and `docs/rules.md`
+          required: true
+        - label: >
+            I read the non-goals in the README — some of these are deliberate
+          required: true

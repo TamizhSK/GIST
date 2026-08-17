@@ -1,0 +1,11 @@
+# E106 — `vibe:` is the dialect spelling of `name:`. Writing both in one
+# mapping means one of them is silently dropped by the alias rewrite, so we
+# refuse the file instead of guessing which one was meant.
+name: canonical name
+vibe: dialect name
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi

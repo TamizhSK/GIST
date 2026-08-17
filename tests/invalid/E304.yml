@@ -1,0 +1,12 @@
+# E304 — two steps in one job with the same id. `steps.setup.outputs` cannot
+# name both, so the second silently wins.
+name: duplicate step id
+on: [push]
+jobs:
+  build:
+    runs-on: local
+    steps:
+      - id: setup
+        run: echo first
+      - id: setup
+        run: echo second

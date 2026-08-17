@@ -1,0 +1,63 @@
+name: Bug report
+description: Something ran differently than the workflow said it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most reports are answered by the output of `yeet doctor`, so it is the
+        first field rather than the last. If it says something is wrong, try
+        the fix it prints before filing.
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: yeet doctor
+      description: Paste the whole thing, including the lines that passed.
+      render: text
+      placeholder: $ yeet doctor
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, and what it did.
+      placeholder: |
+        $ yeet run ci
+        ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+      description: >
+        If the same workflow behaves differently on GitHub Actions, say so —
+        that difference is the bug we care most about.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workflow
+    attributes:
+      label: The smallest workflow that reproduces it
+      description: Trim it down. A ten-line file is worth ten times a hundred-line one.
+      render: yaml
+    validations:
+      required: false
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where
+      options:
+        - Linux
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows
+        - WSL2
+    validations:
+      required: true
