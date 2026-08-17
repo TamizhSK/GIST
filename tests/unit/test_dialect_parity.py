@@ -73,7 +73,7 @@ jobs:
 
 def _build(tmp_path: Path, text: str, name: str):
     path = tmp_path / name
-    path.write_text(text, encoding="utf-8")
+    path.write_text(text, encoding="utf-8", newline="\n")
     bag, workflow = validate_file(path, upto=3)
     assert workflow is not None, [d.code for d in bag.items]
     assert not bag.has_errors(), [(d.code, d.message) for d in bag.errors]

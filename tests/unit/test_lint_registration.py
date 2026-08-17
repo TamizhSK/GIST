@@ -71,6 +71,7 @@ def test_lints_reach_the_user_through_validate_file(tmp_path: Path) -> None:
         "      - name: checkout\n"
         "        uses: actions/checkout@main\n",
         encoding="utf-8",
+        newline="\n",
     )
 
     bag, workflow = validate_file(flow, upto=4)
@@ -94,6 +95,7 @@ def test_lint_yml_can_silence_a_rule(tmp_path: Path) -> None:
         "      - name: checkout\n"
         "        uses: actions/checkout@main\n",
         encoding="utf-8",
+        newline="\n",
     )
 
     bag, _ = validate_file(flow, upto=4)

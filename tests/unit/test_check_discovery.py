@@ -59,7 +59,7 @@ def project(tmp_path):
 def test_check_finds_every_layout_scan_finds(project, where):
     path = project / where
     path.parent.mkdir(parents=True)
-    path.write_text(FLOW, encoding="utf-8")
+    path.write_text(FLOW, encoding="utf-8", newline="\n")
 
     result = runner.invoke(app, ["check", str(project)])
 
@@ -73,7 +73,7 @@ def test_the_two_commands_agree_on_the_count(project):
     for where in ("workflows/a.yaml", ".github/workflows/b.yml"):
         path = project / where
         path.parent.mkdir(parents=True)
-        path.write_text(FLOW, encoding="utf-8")
+        path.write_text(FLOW, encoding="utf-8", newline="\n")
 
     found = len(analyze(project).flows)
     result = runner.invoke(app, ["check", str(project)])
@@ -87,7 +87,7 @@ def test_a_clean_run_says_so(project):
     found no files — and those had different meanings and the same exit code."""
     path = project / "workflows" / "ci.yml"
     path.parent.mkdir(parents=True)
-    path.write_text(FLOW, encoding="utf-8")
+    path.write_text(FLOW, encoding="utf-8", newline="\n")
 
     result = runner.invoke(app, ["check", str(project)])
 
@@ -100,7 +100,7 @@ def test_json_is_valid_json_even_when_there_is_nothing_to_report(project):
     common one."""
     path = project / "workflows" / "ci.yml"
     path.parent.mkdir(parents=True)
-    path.write_text(FLOW, encoding="utf-8")
+    path.write_text(FLOW, encoding="utf-8", newline="\n")
 
     result = runner.invoke(app, ["check", str(project), "--format", "json"])
 
@@ -133,7 +133,7 @@ def test_discovery_order_is_deterministic(project):
     for name in ("c.yml", "a.yml", "b.yml"):
         path = project / "workflows" / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(FLOW, encoding="utf-8")
+        path.write_text(FLOW, encoding="utf-8", newline="\n")
 
     first = runner.invoke(app, ["check", str(project), "--format", "json"]).output
     second = runner.invoke(app, ["check", str(project), "--format", "json"]).output

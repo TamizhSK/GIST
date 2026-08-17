@@ -22,8 +22,8 @@ _ARGV: dict[str, list[str]] = {
     # bash too; W405 is the lint that nudges users to be explicit about it.
     "bash": ["bash", "-e", "-o", "pipefail"],
     "sh": ["sh", "-e"],
-    "pwsh": ["pwsh", "-NoProfile", "-NonInteractive", "-File"],
-    "powershell": ["powershell", "-NoProfile", "-NonInteractive", "-File"],
+    "pwsh": ["pwsh", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"],
+    "powershell": ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"],
     "python": ["python3", "-u"],
     "node": ["node"],
 }
