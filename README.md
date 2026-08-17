@@ -120,6 +120,15 @@ If that is refused, your execution policy is doing its job. For one command:
 powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/TamizhSK/GIST/main/install.ps1 | iex"
 ```
 
+New terminals have `yeet` on PATH from then on. To use it in the terminal you
+ran the installer in, source the env file it leaves behind — no process can put
+something on the PATH of the shell that started it, so this is the one manual
+step, and it is one line:
+
+```bash
+. "$HOME/.local/share/yeet/env"     # fish: source ~/.local/share/yeet/env.fish
+```
+
 Then, before anything else:
 
 ```bash
@@ -133,11 +142,18 @@ curl -fsSLO https://raw.githubusercontent.com/TamizhSK/GIST/main/install.sh
 less install.sh && sh install.sh
 ```
 
-Pin a version, or install from a clone with no network:
+Run from a clone, the installer installs **that clone** — no flag, no network,
+and no way to accidentally install `main` over the branch you are editing:
+
+```bash
+./install.sh                  # PowerShell: .\install.ps1
+```
+
+Pin a published version instead, from anywhere:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TamizhSK/GIST/main/install.sh | sh -s -- --version v0.1.0
-./install.sh --local          # PowerShell: .\install.ps1 -Local
+./install.sh --version main   # from inside a clone: fetch, don't use the clone
 ```
 
 Or install straight with [pipx](https://pipx.pypa.io) or
@@ -182,9 +198,21 @@ streaming form interleaves eight jobs into one column.
   2/3 jobs  ·  1 flopped  ·  following   [f] follow   [q] quit
 ```
 
-Needs Textual (`pip install 'yeet[tui]'`). Without it — or into a pipe —
-`--tui` says so and falls back to the streaming view, because a runner that
-will not run because a display library is missing has failed at its actual job.
+The layout follows the window. The output pane is never given the smaller half,
+and under 72 columns the two panes stop competing for the same row and stack —
+a tree squeezed to 25 columns and a log squeezed to 18 are two panes you cannot
+read instead of one you can. Resizing mid-run re-fits.
+
+The dashboard stays up when the run ends — it is a thing you watch, and the
+alternate screen is discarded on exit, so it waits for `q` rather than taking
+the run away with it. The summary is printed to your scrollback afterwards
+either way.
+
+Needs Textual, which both installers put in yeet's own virtualenv for you. If
+you installed with bare `pip`/`pipx`/`uv`, ask for it: `pip install 'yeet[tui]'`.
+Without it — or into a pipe — `--tui` says so and falls back to the streaming
+view, because a runner that will not run because a display library is missing
+has failed at its actual job.
 
 ## Reproducing GitHub exactly
 

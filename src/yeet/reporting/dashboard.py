@@ -70,6 +70,19 @@ MAX_LINES_PER_STEP = 2000
 """A chatty step must not turn the pane into an unbounded buffer. The whole log
 is on disk in `.yeet/runs/` either way — this is a window, not the record."""
 
+NARROW_COLS = 72
+"""Below this the tree and the log stack instead of sitting side by side.
+
+Chosen from the narrowest side-by-side split that still reads: at 72 the tree
+takes 28 columns and the log 42, which fits a typical `test 1 ok` line. Under
+that the log pane stops being able to hold a line of build output, and two
+unreadable panes are worse than one readable one.
+
+Handled with a class toggled from `on_resize` rather than Textual's own
+breakpoints, which arrived well after the `textual>=0.80` floor in
+pyproject.toml.
+"""
+
 # The wordmark's gradient, sampled where each part of the UI sits in it, read
 # from `theme.sunset` rather than copied — so the dashboard, the streaming
 # renderers, the installer banner and `assets/yeet.svg` are all tinted from one
@@ -100,8 +113,16 @@ Screen {{ background: {_BG}; }}
 
 #body {{ height: 1fr; }}
 
+/* A FRACTION with bounds, never a fixed 44. The pane you are actually reading
+   is the log, and a fixed sidebar takes its column count out of the log's
+   hide: at 80x24 — still the commonest terminal there is — 44 of 80 columns
+   went to the tree and the step's own output was cut mid-word. The bounds
+   stop the ratio from being silly in the other direction: 40% of 200 columns
+   is a sidebar wider than the names it holds. */
 #tree {{
-    width: 44;
+    width: 40%;
+    min-width: 22;
+    max-width: 44;
     background: {_BG};
     border-right: solid {_DEEP};
     padding: 0 1;
@@ -109,6 +130,22 @@ Screen {{ background: {_BG}; }}
     scrollbar-color-hover: {_STEP};
     scrollbar-background: {_BG};
 }}
+
+/* Under NARROW_COLS the two panes stop competing for the same row and stack.
+   Side by side, a 46-column terminal gave the log pane two columns — which is
+   not a small log pane, it is no log pane — and truncated every job name in
+   the tree as well. Stacked, both get the full width. */
+#body.narrow {{ layout: vertical; }}
+
+#body.narrow #tree {{
+    width: 100%;
+    max-width: 100%;
+    height: 40%;
+    border-right: none;
+    border-bottom: solid {_DEEP};
+}}
+
+#body.narrow #log {{ width: 100%; height: 1fr; }}
 
 /* The tree's own cursor and guides, so a selected job reads as selected
    without a second colour system arriving from Textual's defaults. */
@@ -187,6 +224,10 @@ class DashboardSink:
         self._app: Any = None
         self._thread: threading.Thread | None = None
         self._done = threading.Event()
+        #: Set by `run_dashboard`'s worker when the run has returned. The app
+        #: watches it so it can drain what is LEFT in the queue before showing
+        #: the run as finished — see `_YeetApp._drain`.
+        self._finished = threading.Event()
 
     # -- LogSink -------------------------------------------------------------
 
@@ -230,11 +271,21 @@ def run_dashboard(sink: DashboardSink, work: Callable[[], T]) -> T:
     * The backend — and therefore `install_cleanup_handlers`, which registers
       SIGINT/SIGTERM container reaping — is constructed by `cmd_run` on the
       main thread BEFORE this is called. Move that and Ctrl-C stops reaping.
-    * The app closes itself when `work` returns, so the dashboard is a view of
-      one run rather than something the user has to dismiss.
+    * A finished run does NOT close the app; the worker sets `sink._finished`
+      and the app drains the rest of the queue, shows the final tree and waits
+      for `q`. It used to call `app.exit` here instead, and that lost the whole
+      run to a race: `work` for a `cooked_on: local` flow returns in
+      milliseconds, long before Textual has mounted and started its 20 Hz
+      drain, so the app was told to exit with every event still queued. What
+      you got was one frame of an empty tree reading "starting…". The alternate
+      screen is discarded on exit, so there is nothing to auto-close TOWARD —
+      `--tui` is a thing you watch, and it is TTY-only, so nothing scripted is
+      left hanging on the keypress.
     * `work`'s exception is re-raised HERE, on the main thread, after the app
       has torn the alternate screen down. Raising it inside the worker would
-      print a traceback onto a screen that is about to be discarded.
+      print a traceback onto a screen that is about to be discarded. A CRASH
+      does close the app immediately: a traceback held hostage behind a keypress
+      is worse than a dashboard that vanished.
     """
     holder: dict[str, Any] = {}
     app = _YeetApp(sink)
@@ -245,12 +296,13 @@ def run_dashboard(sink: DashboardSink, work: Callable[[], T]) -> T:
             holder["value"] = work()
         except BaseException as exc:  # noqa: BLE001 - re-raised on the main thread
             holder["error"] = exc
-        finally:
             # Suppressed because the app may already be gone — the user can
             # press `q` before the run finishes, and asking a dead app to exit
             # must not turn a finished run into a crash.
             with contextlib.suppress(Exception):
                 app.call_from_thread(app.exit)
+        finally:
+            sink._finished.set()
 
     thread = threading.Thread(target=worker, name="yeet-run")
     thread.start()
@@ -288,6 +340,8 @@ try:  # pragma: no cover - exercised only where textual is installed
             self._tree_nodes: dict[tuple[str, str], Any] = {}
             self._selected: tuple[str, str] | None = None
             self._follow = True
+            self._run_done = False
+            self._narrow = False
 
         def compose(self) -> ComposeResult:
             yield Static(self._banner(), id="banner")
@@ -318,6 +372,21 @@ try:  # pragma: no cover - exercised only where textual is installed
             # that a job printing thousands of lines does not spend the whole
             # run repainting instead of draining.
             self.set_interval(1 / 20, self._drain)
+            self._fit(self.size.width)
+
+        def on_resize(self, event: Any) -> None:
+            """Re-fit when the window changes — a terminal is resized DURING a
+            run more often than anyone plans for, and a layout chosen once at
+            startup is wrong from the drag onward."""
+            self._fit(event.size.width)
+
+        def _fit(self, width: int) -> None:
+            narrow = width < NARROW_COLS
+            if narrow == self._narrow:
+                return
+            self._narrow = narrow
+            self.query_one("#body").set_class(narrow, "narrow")
+            self._set_status()
 
         def action_follow(self) -> None:
             self._follow = not self._follow
@@ -341,6 +410,16 @@ try:  # pragma: no cover - exercised only where textual is installed
                     break
                 self._apply(event)
                 changed = True
+
+            # The run is only DONE once the worker has finished AND the queue it
+            # was filling is empty. Checking `_finished` alone would call a run
+            # finished with its last events still in flight — which is the same
+            # ordering mistake that used to lose the entire run (`run_dashboard`).
+            drained = self._sink._finished.is_set() and self._sink._events.empty()
+            if drained and not self._run_done:
+                self._run_done = True
+                changed = True
+
             if changed:
                 self._set_status()
 
@@ -452,8 +531,19 @@ try:  # pragma: no cover - exercised only where textual is installed
             bar.append(f"  {done}/{len(self._jobs)} jobs", style=f"bold {_SUN}")
             if failed:
                 bar.append(f"  ·  {failed} flopped", style=f"bold {_BAD}")
-            bar.append(f"  ·  {follow}", style=_WARM)
-            bar.append("   [f] follow   [q] quit", style=_DEEP)
+            # Once the run is over "following" is a lie — there is nothing left
+            # to follow — and the user needs telling that the screen is theirs
+            # to read for as long as they want it.
+            if self._run_done:
+                bar.append("  ·  run finished", style=f"bold {_BAD}" if failed else f"bold {_OK}")
+                bar.append("   [q] close", style=_DEEP)
+            else:
+                bar.append(f"  ·  {follow}", style=_WARM)
+                # The key hints are the first thing to go when there is no room:
+                # a status bar clipped mid-word tells you less than a short one,
+                # and `q` and `f` are also in the help Textual already binds.
+                if not self._narrow:
+                    bar.append("   [f] follow   [q] quit", style=_DEEP)
             self.query_one("#status", Static).update(bar)
 
 except ImportError:  # pragma: no cover - textual is optional

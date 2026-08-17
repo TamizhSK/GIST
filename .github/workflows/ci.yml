@@ -122,7 +122,8 @@ jobs:
         env:
           YEET_NO_MODIFY_PATH: "1"
         run: |
-          .\install.ps1 -Local
+          # No flag: a script sitting in a clone installs that clone.
+          .\install.ps1
           & "$env:LOCALAPPDATA\yeet\bin\yeet.cmd" --version
           & "$env:LOCALAPPDATA\yeet\bin\yeet.cmd" doctor
 
@@ -131,7 +132,7 @@ jobs:
         env:
           YEET_NO_MODIFY_PATH: "1"
         run: |
-          .\install.ps1 -Local
+          .\install.ps1 -Local   # idempotent, and the explicit spelling
           & "$env:LOCALAPPDATA\yeet\bin\yeet.cmd" --version
 
   installer-posix:
@@ -155,17 +156,37 @@ jobs:
         if: matrix.image != ''
         run: |
           docker run --rm -v "$PWD:/src" -w /src ${{ matrix.image }} sh -c \
-            "${{ matrix.setup }} && ./install.sh --local && ~/.local/bin/yeet --version"
+            "${{ matrix.setup }} && ./install.sh && ~/.local/bin/yeet --version"
 
       - name: install on the host
         if: matrix.image == ''
         env:
           YEET_NO_MODIFY_PATH: "1"
         run: |
-          ./install.sh --local
+          # No flag: a script sitting in a clone installs that clone. This is
+          # the form every contributor actually types, so it is the one CI
+          # runs — `--local` below only proves the explicit spelling still works.
+          ./install.sh
           ~/.local/bin/yeet --version
-          ./install.sh --local   # idempotent: a second run must not duplicate
+          ./install.sh --local   # idempotent, and the explicit spelling
           ~/.local/bin/yeet doctor || true   # no Docker on the macOS runner
+
+      - name: a copy outside a clone still installs from GitHub
+        if: matrix.image == ''
+        env:
+          YEET_NO_MODIFY_PATH: "1"
+        run: |
+          # Auto-detection must key off yeet's own pyproject.toml, or the
+          # installer would install whatever project it was copied into.
+          mkdir -p /tmp/not-a-clone
+          cp install.sh /tmp/not-a-clone/
+          printf '[project]\nname = "somebody-elses-thing"\n' > /tmp/not-a-clone/pyproject.toml
+          /tmp/not-a-clone/install.sh 2>&1 | tee /tmp/out.txt
+          if grep -q 'installing from this clone' /tmp/out.txt; then
+            echo "::error::auto-detection claimed a clone that is not yeet"
+            exit 1
+          fi
+          ~/.local/bin/yeet --version
 
   rules-doc:
     # docs/rules.md is generated from core/codes.py. Regenerate and diff, so a

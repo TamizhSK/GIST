@@ -12,9 +12,12 @@
 # POSIX sh on purpose: /bin/sh is dash on Debian and Ubuntu (so also on most of
 # WSL), and bashisms here would fail on exactly the machines this targets.
 #
+# Run from a clone, it installs THAT clone — `./install.sh` inside a checkout
+# you have been editing means the checkout, not `main` off the network.
+#
 # Options (after `--` when piped:  ... | sh -s -- --version v0.1.0):
-#   --version <ref>   install a tag, branch or commit instead of main
-#   --local           install from THIS clone, no network fetch of the source
+#   --version <ref>   install a tag, branch or commit from GitHub instead
+#   --local           install from THIS clone (the default when there is one)
 #   --help
 #
 # Environment:
@@ -34,6 +37,14 @@ MIN_MINOR=10
 MAX_TESTED=13   # the newest minor the CI matrix actually runs
 TOTAL_STEPS=4
 LOCAL_DIR=''
+AUTO_LOCAL=0        # did we find the clone ourselves, or were we told?
+#: Was a specific ref ASKED for? `REF` always has a value (`main`), so the
+#: default is indistinguishable from a choice unless we record the choice.
+#: Asking for a ref means "install that ref from GitHub", which is the one
+#: thing the clone next to the script is definitely not.
+REF_EXPLICIT=0
+[ -n "${YEET_REF:-}" ] && REF_EXPLICIT=1
+[ -n "${YEET_REPO:-}" ] && REF_EXPLICIT=1
 
 usage() {
     cat <<'USAGE'
@@ -41,9 +52,14 @@ yeet installer
 
   curl -fsSL https://raw.githubusercontent.com/TamizhSK/GIST/main/install.sh | sh
 
+Run from a clone, it installs that clone. No flag needed:
+
+  ./install.sh
+
 Options:
-  --version <ref>   a tag, branch or commit (default: main)
-  --local           install from the clone this script sits in
+  --version <ref>   a tag, branch or commit from GitHub (default: main)
+  --local           install from the clone this script sits in — the default
+                    already, when it sits in one
   --help            this text
 USAGE
 }
@@ -53,20 +69,46 @@ USAGE
 # `--local` is the path that still works when the venue's wifi does not.
 while [ $# -gt 0 ]; do
     case "$1" in
-        --version) [ $# -ge 2 ] || { usage >&2; exit 2; }; REF="$2"; shift 2 ;;
-        --version=*) REF="${1#--version=}"; shift ;;
+        --version) [ $# -ge 2 ] || { usage >&2; exit 2; }; REF="$2"; REF_EXPLICIT=1; shift 2 ;;
+        --version=*) REF="${1#--version=}"; REF_EXPLICIT=1; shift ;;
         --local)
-            # `dirname "$0"` is meaningless under `curl | sh` — $0 is `sh`.
-            case "$0" in
-                */*) LOCAL_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd) ;;
-                *)   printf '%s\n' "--local needs the script on disk: clone, then ./install.sh --local" >&2
-                     exit 2 ;;
-            esac
+            # `dirname "$0"` is meaningless under `curl | sh` — there $0 is `sh`
+            # and no script exists on disk to install from.
+            #
+            # Test for the FILE, not for a slash: `sh install.sh --local` sets
+            # $0 to a bare `install.sh`, which has no slash and is nonetheless
+            # a real file in $PWD. Keying off the slash rejected it and printed
+            # advice to do the thing the user had just done.
+            if [ -f "$0" ]; then
+                LOCAL_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+            else
+                printf '%s\n' "--local needs the script on disk: clone, then ./install.sh --local" >&2
+                exit 2
+            fi
             shift ;;
         --help|-h) usage; exit 0 ;;
         *) printf 'unknown option: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
 done
+
+# THE CLONE IS THE DEFAULT when the script is sitting in one. `--local` was a
+# flag you had to already know existed: running `./install.sh` inside a clone
+# you had just edited went to the network and installed `main` instead, which
+# is never what that command means. So detect it.
+#
+# Silent on every failed check, unlike explicit `--local` — this path runs for
+# `curl | sh` too, where none of it applies, and auto-detection that can fail
+# an install is worse than no auto-detection. `--local` stays for CI and for
+# saying it out loud; it now asks for what would have happened anyway.
+if [ -z "$LOCAL_DIR" ] && [ "$REF_EXPLICIT" = 0 ] && [ -f "$0" ]; then
+    CANDIDATE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd 2>/dev/null) || CANDIDATE=''
+    # `name = "yeet"` and not merely "a pyproject.toml exists": install.sh
+    # copied into an unrelated project must not install that project.
+    if [ -n "$CANDIDATE" ] && grep -q '^name = "yeet"' "$CANDIDATE/pyproject.toml" 2>/dev/null; then
+        LOCAL_DIR="$CANDIDATE"
+        AUTO_LOCAL=1
+    fi
+fi
 
 # ── presentation ──────────────────────────────────────────────────────────────
 # Two independent questions, and conflating them is the usual bug: "may I use
@@ -247,7 +289,15 @@ fi
 if [ -n "$LOCAL_DIR" ]; then
     [ -f "$LOCAL_DIR/pyproject.toml" ] || die "--local: no pyproject.toml in $LOCAL_DIR"
     SOURCE="$LOCAL_DIR"
-    ok "installing from this clone ${MUTE}($LOCAL_DIR)${N}"
+    if [ "$AUTO_LOCAL" = 1 ]; then
+        # Named, not silent. Installing something other than what the user
+        # thinks is the worst outcome available here, so the choice we made on
+        # their behalf is on screen with the way to override it.
+        ok "installing from this clone ${MUTE}($LOCAL_DIR)${N}"
+        info "${MUTE}pass --version <ref> to install from GitHub instead${N}"
+    else
+        ok "installing from this clone ${MUTE}($LOCAL_DIR)${N}"
+    fi
 elif command -v git >/dev/null 2>&1; then
     SOURCE="git+$REPO@$REF"
     ok "git $(git --version 2>/dev/null | awk '{print $3}')"
@@ -317,6 +367,25 @@ if [ -n "$INSTALL_FAILED" ]; then
     sed 's/^/      /' "$HOME_DIR/install.log" >&2 2>/dev/null || true
     die "the install failed. The full log is at $HOME_DIR/install.log"
 fi
+
+# `yeet run --tui` needs Textual, which is an OPTIONAL extra in pyproject.toml.
+# Optional there is right — `pip install yeet` must not drag a display library
+# into someone's tool venv — but this installer OWNS the venv it just built, so
+# there is nobody else to inconvenience, and a documented flag that says
+# "install another package first" is a flag that does not work.
+#
+# Installed as its own non-fatal step rather than as `$SOURCE[tui]`: the extras
+# syntax differs between a local path, a `git+` URL and a tarball, and a
+# malformed one of the three would fail the WHOLE install for the sake of a
+# nicety. This way a machine with no Textual wheel still gets a working yeet,
+# and `--tui` degrades to the streaming view exactly as designed.
+if [ "$BACKEND" = uv ]; then
+    spin "adding the dashboard" uv pip install --python "$VENV_PY" 'textual>=0.80' \
+        || warn "no dashboard: --tui will use the streaming view"
+else
+    spin "adding the dashboard" "$VENV_PY" -m pip install 'textual>=0.80' \
+        || warn "no dashboard: --tui will use the streaming view"
+fi
 # `head -1`: `yeet --version` reports the interpreter, the OS and Docker under
 # the version line now, and all four inside one `ok` bullet reads as a fault.
 ok "$("$HOME_DIR/venv/bin/yeet" --version 2>/dev/null | head -1 || echo yeet)"
@@ -345,14 +414,52 @@ EOF
 chmod 755 "$BIN_DIR/yeet-uninstall"
 ok "$BIN_DIR/yeet"
 
+# A process cannot change the environment of the shell that started it — that
+# is an OS boundary, not an oversight, and it is why every curl|sh installer
+# ends with either "open a new terminal" or a line to source. The profile edit
+# below only reaches shells started LATER; this file is what finishes the job
+# in the terminal the user is standing in right now.
+#
+# Written unconditionally, even when $BIN_DIR is already on PATH: it costs
+# nothing, and `. ~/.local/share/yeet/env` should mean the same thing on every
+# machine rather than existing only on the ones that happened to need it.
+cat > "$HOME_DIR/env" <<EOF
+#!/bin/sh
+# Puts yeet on PATH for the current shell. SOURCE this, do not run it:
+#     . "$HOME_DIR/env"
+# Idempotent — sourcing it twice does not put $BIN_DIR on PATH twice.
+case ":\$PATH:" in
+    *":$BIN_DIR:"*) ;;
+    *) PATH="$BIN_DIR:\$PATH"; export PATH ;;
+esac
+EOF
+chmod 644 "$HOME_DIR/env"
+
+# fish is not POSIX and cannot source the above at all.
+cat > "$HOME_DIR/env.fish" <<EOF
+# Puts yeet on PATH for the current shell. SOURCE this, do not run it:
+#     source $HOME_DIR/env.fish
+if not contains $BIN_DIR \$PATH
+    set -gx PATH $BIN_DIR \$PATH
+end
+EOF
+chmod 644 "$HOME_DIR/env.fish"
+
 # `~/.local/bin` is on PATH by default on many distributions and on none of the
 # others. Checking is the difference between "installed" and "installed and
 # usable", and it is the single most common reason a curl|sh install appears
 # to have done nothing at all.
+#
+# TWO questions, and answering them with one variable was a bug: "is it on PATH
+# in the shell that ran me" and "will it be on PATH in the next shell" have
+# different answers on every re-install. The profile already holds the line, so
+# the second is yes — while the first is still no, and that is exactly the run
+# where the installer said nothing at all and `yeet` was not found.
 case ":$PATH:" in
-    *":$BIN_DIR:"*) PATH_OK=1 ;;
-    *)              PATH_OK=0 ;;
+    *":$BIN_DIR:"*) USABLE_NOW=1 ;;
+    *)              USABLE_NOW=0 ;;
 esac
+PATH_OK=$USABLE_NOW
 
 if [ "$PATH_OK" = 0 ] && [ -z "${YEET_NO_MODIFY_PATH:-}" ]; then
     case "${SHELL##*/}" in
@@ -443,10 +550,19 @@ fi
 say ""
 printf '  %s\n' "$DOCKER_NOTE"
 
-if [ "$PATH_OK" = 0 ]; then
+if [ "$USABLE_NOW" = 0 ]; then
+    # The last instruction of the install, so it gets the shortest thing that
+    # actually works. `export PATH=...` was correct and nobody reads it as an
+    # instruction — it looks like a diagnostic.
     say ""
-    printf '  %s%s%s open a new terminal, or run:  %sexport PATH="%s:$PATH"%s\n' \
-        "$Y" "$ARROW" "$N" "$B" "$BIN_DIR" "$N"
+    if [ "${SHELL##*/}" = fish ]; then
+        ACTIVATE="source $HOME_DIR/env.fish"
+    else
+        ACTIVATE=". \"$HOME_DIR/env\""
+    fi
+    printf '  %s%s%s to use it in %sthis%s terminal:  %s%s%s\n' \
+        "$Y" "$ARROW" "$N" "$B" "$N" "$B" "$ACTIVATE" "$N"
+    printf '     %severy new terminal picks it up on its own%s\n' "$MUTE" "$N"
 fi
 say ""
 printf '  %sremove it again with  yeet-uninstall%s\n' "$MUTE" "$N"

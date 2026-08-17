@@ -20,7 +20,8 @@
   A tag, branch or commit. Default: main.
 
 .PARAMETER Local
-  Install from the clone this script sits in. No network fetch of the source.
+  Install from the clone this script sits in — already the default when it sits
+  in one, so this only says out loud what would have happened anyway.
 
 .EXAMPLE
   irm https://raw.githubusercontent.com/TamizhSK/GIST/main/install.ps1 | iex
@@ -227,10 +228,31 @@ no Python 3.$MinMinor or newer, and no uv to fetch one.
 "@
 }
 
+# `iex` has no script root — the file was never on disk. Read it the safe way
+# rather than touching a variable that may not exist.
+$here = Get-Variable -Name PSScriptRoot -ValueOnly -ErrorAction SilentlyContinue
+
+# THE CLONE IS THE DEFAULT when the script is sitting in one. `.\install.ps1`
+# inside a checkout you have been editing means the checkout, not `main` off
+# the network, and -Local was a flag you had to already know existed.
+#
+# Asking for a -Version means "install that ref from GitHub", which is the one
+# thing the clone next to the script is definitely not. Checked with
+# $PSBoundParameters so the default value is not mistaken for a choice.
+$autoLocal = $false
+if (-not $Local -and -not $PSBoundParameters.ContainsKey('Version') -and -not $env:YEET_REF -and -not $env:YEET_REPO) {
+    if ($here) {
+        $marker = Join-Path $here 'pyproject.toml'
+        # yeet's OWN pyproject, not merely one: this script copied into an
+        # unrelated project must not install that project.
+        if ((Test-Path $marker) -and (Select-String -Path $marker -Pattern '^name = "yeet"' -Quiet)) {
+            $Local = $true
+            $autoLocal = $true
+        }
+    }
+}
+
 if ($Local) {
-    # `iex` has no script root — the file was never on disk. Read it the safe
-    # way rather than touching a variable that may not exist.
-    $here = Get-Variable -Name PSScriptRoot -ValueOnly -ErrorAction SilentlyContinue
     if (-not $here) {
         Stop-Install '-Local needs the script on disk: clone, then .\install.ps1 -Local'
     }
@@ -239,6 +261,11 @@ if ($Local) {
         Stop-Install "-Local: no pyproject.toml in $Source"
     }
     Write-Ok "installing from this clone ($Source)"
+    if ($autoLocal) {
+        # Named, not silent. Installing something other than what the user
+        # thinks is the worst outcome available here.
+        Write-Info 'pass -Version <ref> to install from GitHub instead'
+    }
 } elseif (Get-Command git -ErrorAction SilentlyContinue) {
     $Source = "git+$Repo@$Version"
     Write-Ok 'git found'
@@ -301,6 +328,18 @@ if (-not $ok) {
         ForEach-Object { Write-Info $_ }
     Stop-Install "the install failed. The full log is at $(Join-Path $HomeDir 'install.log')"
 }
+
+# `yeet run --tui` needs Textual, an optional extra in pyproject.toml. Optional
+# is right for `pip install yeet`; this installer owns the venv it just built,
+# so there is nobody else to inconvenience, and a documented flag that first
+# asks you to install another package is a flag that does not work. Non-fatal
+# and separate from $Source for the same reasons as in install.sh.
+if ($Backend -eq 'uv') {
+    $tui = Invoke-Quiet 'adding the dashboard' 'uv' @('pip', 'install', '--python', $VenvPy, 'textual>=0.80')
+} else {
+    $tui = Invoke-Quiet 'adding the dashboard' $VenvPy @('-m', 'pip', 'install', 'textual>=0.80')
+}
+if (-not $tui) { Write-Warn 'no dashboard: --tui will use the streaming view' }
 
 $VenvYeet = Join-Path (Join-Path $VenvDir 'Scripts') 'yeet.exe'
 $banner = & $VenvYeet --version 2>$null | Select-Object -First 1
