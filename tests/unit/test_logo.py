@@ -19,15 +19,45 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import gen_logo  # noqa: E402
 
+#: A wordmark row: long, and made of nothing but the block, the hash and space.
+_ART_ROW = re.compile(r"'([ █#]{40,})'")
 
-def _banner_rows() -> list[str]:
-    """The six `printf` rows of the installer's banner, unescaped."""
-    script = (ROOT / "install.sh").read_text(encoding="utf-8")
-    return re.findall(r"printf '  %s(.*?)%s\\n'", script)[:6]
+
+def _wordmarks(filename: str, lead: str = "") -> tuple[list[str], list[str]]:
+    """The two six-row forms in an installer: (block, ascii).
+
+    Both scripts carry the wordmark twice — `█` for a UTF-8 terminal and `#`
+    for everything else — because the ASCII form is not a rarity. `LANG` unset
+    is a routine macOS configuration, and Windows PowerShell 5.1 runs on
+    codepage 437, so the `#` rows are what a great many people actually see.
+    """
+    script = (ROOT / filename).read_text(encoding="utf-8")
+    rows = [row[len(lead) :] if lead else row for row in _ART_ROW.findall(script)]
+    assert len(rows) == 12, f"{filename}: expected two six-row wordmarks, found {len(rows)}"
+    return rows[:6], rows[6:]
 
 
 def test_the_svg_and_the_installer_draw_the_same_letters() -> None:
-    assert _banner_rows() == gen_logo.ART
+    block, _ = _wordmarks("install.sh")
+    assert block == gen_logo.ART
+
+
+def test_the_powershell_installer_draws_them_too() -> None:
+    """install.ps1 had no such check at all, and a wordmark nobody compares is
+    a wordmark that drifts."""
+    block, _ = _wordmarks("install.ps1", lead="  ")
+    assert block == gen_logo.ART
+
+
+def test_the_ascii_form_is_the_same_letters_in_a_different_alphabet() -> None:
+    """Two spellings of one wordmark, so they are checked against each other
+    rather than hand-counted twice. The `#` rows are what a stock Windows
+    console and a locale-less shell get, which makes them the ones most likely
+    to be edited last and least likely to be looked at."""
+    for filename, lead in (("install.sh", ""), ("install.ps1", "  ")):
+        block, ascii_form = _wordmarks(filename, lead)
+        expected = [row.replace("█", "#") for row in block]
+        assert ascii_form == expected, filename
 
 
 def test_every_row_is_the_same_width() -> None:
