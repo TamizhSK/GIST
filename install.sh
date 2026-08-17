@@ -29,12 +29,32 @@
 
 set -eu
 
+# Everything below defaults into $HOME. Unset, `set -u` kills the script with
+# "HOME: parameter not set" at whichever line touches it first, which tells the
+# user nothing about what to do. Say it once, up front, in words.
+if [ -z "${HOME:-}" ]; then
+    printf '%s\n' "HOME is not set, so there is nowhere to install to." >&2
+    printf '%s\n' "Set HOME, or point YEET_HOME and YEET_BIN_DIR somewhere writable." >&2
+    exit 1
+fi
+
 REPO="${YEET_REPO:-https://github.com/TamizhSK/GIST}"
 REF="${YEET_REF:-main}"
 HOME_DIR="${YEET_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/yeet}"
 BIN_DIR="${YEET_BIN_DIR:-$HOME/.local/bin}"
 MIN_MINOR=10
 MAX_TESTED=13   # the newest minor the CI matrix actually runs
+
+# `$SHELL` is NOT guaranteed to exist. A Docker image, a cron job, a CI step and
+# `su - <user>` on some systems all run with it unset, and `${SHELL##*/}` under
+# `set -u` is a fatal "SHELL: parameter not set" — which is exactly how this
+# installer died at the last step, after having already done all of its work.
+#
+# `set -u` is worth keeping, so the shell name is read ONCE, here, with a
+# default. /bin/sh is the honest fallback: if we cannot tell what shell this is,
+# the POSIX profile is the right guess.
+SHELL_NAME="${SHELL:-/bin/sh}"
+SHELL_NAME="${SHELL_NAME##*/}"
 TOTAL_STEPS=4
 LOCAL_DIR=''
 AUTO_LOCAL=0        # did we find the clone ourselves, or were we told?
@@ -163,18 +183,37 @@ _BAND_6='38;5;215'   # the low sun
 
 banner() {
     [ "$TTY" = 0 ] && { say "yeet installer"; say ""; return; }
-    if [ "$UNICODE" = 0 ]; then
-        printf '\n%s%s  Y E E T%s   %sa local GitHub Actions runner%s\n\n' \
-            "$B" "$ACCENT" "$N" "$MUTE" "$N"
-        return
+    # The wordmark in whichever alphabet this terminal can render. `█` is
+    # U+2588, so the block form needs a UTF-8 locale — and `LANG` unset is a
+    # ROUTINE macOS configuration (Terminal.app with "set locale variables"
+    # off, an ssh session, `sudo`, cron), not an exotic one. Gating the only
+    # logo on it meant the installer greeted a lot of people with one line of
+    # spaced-out capitals, which is not a wordmark.
+    #
+    # So the same six rows exist in ASCII. Colour is unaffected either way —
+    # ANSI escapes are themselves ASCII, and the gradient is the point.
+    if [ "$UNICODE" = 1 ]; then
+        _R1='████     ████  █████████  █████████  █████████████'
+        _R2=' ████   ████   ████       ████            ████    '
+        _R3='  ████ ████    ███████    ███████         ████    '
+        _R4='   ███████     ███████    ███████         ████    '
+        _R5='     ████      ████       ████            ████    '
+        _R6='     ████      █████████  █████████       ████    '
+    else
+        _R1='####     ####  #########  #########  #############'
+        _R2=' ####   ####   ####       ####            ####    '
+        _R3='  #### ####    #######    #######         ####    '
+        _R4='   #######     #######    #######         ####    '
+        _R5='     ####      ####       ####            ####    '
+        _R6='     ####      #########  #########       ####    '
     fi
     say ""
-    printf '  %s████     ████  █████████  █████████  █████████████%s\n' "${ESC}[${_BAND_1}m" "$N"
-    printf '  %s ████   ████   ████       ████            ████    %s\n' "${ESC}[${_BAND_2}m" "$N"
-    printf '  %s  ████ ████    ███████    ███████         ████    %s\n' "${ESC}[${_BAND_3}m" "$N"
-    printf '  %s   ███████     ███████    ███████         ████    %s\n' "${ESC}[${_BAND_4}m" "$N"
-    printf '  %s     ████      ████       ████            ████    %s\n' "${ESC}[${_BAND_5}m" "$N"
-    printf '  %s     ████      █████████  █████████       ████    %s\n' "${ESC}[${_BAND_6}m" "$N"
+    printf '  %s%s%s\n' "${ESC}[${_BAND_1}m" "$_R1" "$N"
+    printf '  %s%s%s\n' "${ESC}[${_BAND_2}m" "$_R2" "$N"
+    printf '  %s%s%s\n' "${ESC}[${_BAND_3}m" "$_R3" "$N"
+    printf '  %s%s%s\n' "${ESC}[${_BAND_4}m" "$_R4" "$N"
+    printf '  %s%s%s\n' "${ESC}[${_BAND_5}m" "$_R5" "$N"
+    printf '  %s%s%s\n' "${ESC}[${_BAND_6}m" "$_R6" "$N"
     printf '\n  %sa local GitHub Actions runner, with a dialect of its own%s\n\n' "$MUTE" "$N"
 }
 
@@ -462,14 +501,14 @@ esac
 PATH_OK=$USABLE_NOW
 
 if [ "$PATH_OK" = 0 ] && [ -z "${YEET_NO_MODIFY_PATH:-}" ]; then
-    case "${SHELL##*/}" in
+    case "$SHELL_NAME" in
         zsh)  PROFILE="$HOME/.zshrc" ;;
         bash) if [ -f "$HOME/.bash_profile" ]; then PROFILE="$HOME/.bash_profile"; else PROFILE="$HOME/.bashrc"; fi ;;
         fish) PROFILE="$HOME/.config/fish/config.fish" ;;
         *)    PROFILE="$HOME/.profile" ;;
     esac
     LINE="export PATH=\"$BIN_DIR:\$PATH\""
-    [ "${SHELL##*/}" = fish ] && LINE="fish_add_path $BIN_DIR"
+    [ "$SHELL_NAME" = fish ] && LINE="fish_add_path $BIN_DIR"
     if [ -f "$PROFILE" ] && grep -Fq "$BIN_DIR" "$PROFILE" 2>/dev/null; then
         PATH_OK=1  # already there; this shell just has not re-read it
     else
@@ -555,7 +594,7 @@ if [ "$USABLE_NOW" = 0 ]; then
     # actually works. `export PATH=...` was correct and nobody reads it as an
     # instruction — it looks like a diagnostic.
     say ""
-    if [ "${SHELL##*/}" = fish ]; then
+    if [ "$SHELL_NAME" = fish ]; then
         ACTIVATE="source $HOME_DIR/env.fish"
     else
         ACTIVATE=". \"$HOME_DIR/env\""
