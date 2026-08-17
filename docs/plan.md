@@ -24,7 +24,7 @@ ruff format --check      95 files already formatted
 mypy src                 Success: no issues found in 93 source files
 lint-imports             Analyzed 93 files, 56 dependencies. Contracts: 2 kept, 0 broken.
 pytest -m "not docker"   no tests ran   (zero tests is passing)
-yeet --version           yeet 0.1.0
+yeet --version           yeet 0.1
 yeet --help              lists all 10 commands
 ```
 

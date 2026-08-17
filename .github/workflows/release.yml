@@ -2,10 +2,10 @@ name: Release
 
 # Tag, push the tag, and the release builds itself:
 #
-#   git tag -a v0.1.0 -m "..." && git push origin v0.1.0
+#   git tag -a v0.1 -m "..." && git push origin v0.1
 #
 # The wheel and sdist are attached to the GitHub release, which is what makes
-# `install.sh --version v0.1.0` reproducible and what gives a user a plain file
+# `install.sh --version v0.1` reproducible and what gives a user a plain file
 # to download when they have no git. `undone.md` has had "a git-less install"
 # open since session 9; this is the half that was missing.
 on:
