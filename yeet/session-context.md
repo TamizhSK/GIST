@@ -408,24 +408,44 @@ docs/adr/
 
 
 Here's the per-item context for Dev A's plan, A3–A20:
-A3 — analyzer/root.py: Walk up from the start dir for .git/ → .yeet/ → .github/workflows/ → ecosystem marker; highest priority wins; stops at FS root or $HOME; never shells out to git. ✓ Implemented. Tests added this session: git repo, bare dir, nested subdir, $HOME boundary (incl. a marker found from below home).
+A3 — analyzer/root.py: Walk up from the start dir for .git/ → .yeet/ → .github/workflows/ → ecosystem marker; highest priority wins; stops at FS root or $HOME; never shells out to git. ✓
+
+ Implemented. Tests added this session: git repo, bare dir, nested subdir, $HOME boundary (incl. a marker found from below home).
+
 A4 — analyzer/markers.py: Marker→ecosystem→image→default-commands table. Now 16 file markers + 2 extension markers (.csproj/.sln), all filled, no # ... left. ✓ + a table-completeness test.
+
 A5 — analyzer/discover.py: Walk down with EXCLUDE_DIRS, MAX_DEPTH=5, MAX_FILES=20_000, no symlink follow, inode visited-set, per-dir PermissionError handling, .gitignore/.yeetignore via pathspec. Returns flows in precedence order .yeet/flows/ > .github/workflows/ > root yeet.yml, plus foreign CI (.gitlab-ci.yml/Jenkinsfile) reported separately. ✓ Tests added: monorepo w/ node_modules, precedence, foreign CI, depth+ignore, unreadable dir (monkeypatched os.scandir), truncation flag, symlink loop (skips on Windows without symlink privilege).
+
 A6 — analyzer/fingerprint.py: Marker → Ecosystem; reads engines.node from package.json and requires-python from pyproject.toml to pin the version instead of guessing. Dockerfile/compose are infra, not ecosystems. ✓ Tests added: Node (node:18), Python (python:3.11), polyglot, infra exclusion.
+
 A7 — analyzer/project.py: analyze() = A3→A5→A6 + is_git, branch (read from .git/HEAD, never shells out), dockerfile. No YAML parsed here. ✓ Tests added: populated Project (git+branch+flows+foreign+ecosystem+dockerfile) and a bare no-git project.
+
 A8 — cli/app.py: Global --no-color option + honors NO_COLOR env. ✓ Wired in the callback, consumed via _color_enabled in scan. Verified live with yeet --no-color scan and NO_COLOR=1. No CLI harness, so it's hand-verified only.
+
 A9 — cli/cmd_scan.py: The §3.9 report: project line, git/branch, stack, markers, flows with per-flow validity (validate_file upto=2), Dockerfile hint. Zero flows → suggest init --auto, exit 0. ✓ Works end-to-end (smoke-tested on this workspace — root detection correctly climbed to the parent git root). Caveat: per-flow validity prints "validation not built yet" because Dev D's pipeline.validate_file is still a stub; the "3 real repos" target was smoke-tested manually.
+
 A10 — parser/loader.py: ruamel.yaml typ="rt"; E101 syntax (problem_mark), E102 duplicate keys (constructor subclass that raises), E103 non-mapping root, E104 multi-doc, W105 on:→True trap (renames the key, warns). ✓ Gap closed this session: the required tests/invalid/E101.yml…W105.yml fixtures didn't exist — created all 5 + a parametrized test asserting each fires only its code.
+
 A11 — parser/aliases.py: Load aliases.yml once, recursive key rewrite, returns (tree, used_dialect); never fails/warns. manual→workflow_dispatch is handled in the builder, not here. ✓ Covered by golden test 01 (canonical passes through unchanged) and 02 (dialect file rewrites).
+
 A12 — parser/schema/workflow.schema.json: JSON Schema for canonical form only (aliases normalized away). ✓ Present; exercised through layer2 + all golden fixtures.
+
 A13 — validation/layer2_schema.py: jsonschema + best_match, absolute path → jobs.build.steps[2].run; E201 unknown key (with A15 suggestion), E202 missing required, E203 wrong type, E206 empty jobs, E207 invalid id, E208 unsupported event. ✓ Gap closed this session: tests/invalid/E201…E208.yml (8 fixtures, each verified to emit exactly its own code) + the same parametrized test.
+
 A14 — validation/layer1_yaml.py: Thin wrapper over A10 for the pipeline's layer interface. ✓ Present.
+
 A15 — validation/suggest.py: difflib.get_close_matches against canonical keys and aliases. ✓ Implemented and exercised via E201/E208 did-you-mean help text; no dedicated unit test (minor).
+
 A16 — parser/builder.py: dict tree → IR; every Step(pos=...) from lc.value(key), key_pos populated, E204 (both run+uses) / E205 (neither), scalar needs: build → list. ✓ Golden tests exist; gap partially closed: corpus grew 6→9 (added defaults/step-options, multi-job needs DAG, composite use) — still short of the ~20 target, but every IR field is now covered.
+
 A17 — actions/resolver.py + composite.py: local composite (./.yeet/actions/foo/action.yml, runs.using: composite), with: → INPUT_*, defaults, E313/E314/W319. ✓ Unit tests existed; gap closed this session: the literal acceptance "composite expands to list[Step] in a golden test" — added 09-composite-action.yml + .expanded.json and the test in test_actions.py.
+
 A18 — templates/ + cmd_init.py: Jinja2 per-ecosystem templates, init --auto from the fingerprint, writes .gitignore for .yeet/tmp|runs|.secrets. ✓ test_templates.py covers auto-init/fingerprint (passed). Caveat: "yeet check on the result is clean" is still blocked by Dev D's pipeline stub — I verified layers 1–3 directly instead.
+
 A19 — demo ./.yeet/actions/checkout/: Ship your own composite so the demo has zero external deps. ✓ Present at .yeet/actions/checkout/action.yml; also reused as the A17 golden fixture. Offline run still needs Dev C's executor wiring.
+
 A20 — actions/resolver.py remote (stretch): owner/repo@ref → shallow git clone --depth 1 into ~/.yeet/actions/, cached by ref, failed clone = E313. ✓ Implemented with a test double for git_clone; unit-tested (resolve, cache hit skips clone, refs distinct, E313).
+
 Blockers (external, not Dev A's code): yeet check/per-flow validity/offline run depend on Dev D's pipeline.validate_file and Dev C's executor, both still stubs. Net: 224 passed, 37 skipped.
 
 
@@ -438,21 +458,36 @@ Status: complete and green — ruff clean, mypy (99 files) clean, 511 passed, 18
 #	Plan says	Status	What's actually there
 B1	§2.3 contract rejects sibling imports	✅ done pre-session	Output in docs/adr/0007
 B1b	core/graph.py signatures, find_cycle + topo_waves	✅ done (impl = B8)	planner/graph.py adapter untouched
+
 B2	expressions/lexer.py tokenizer, byte offsets	✅	~40 token-stream parametrized tests (test_lexer.py)
-B3	expressions/ast_nodes.py (9 node types + ExprSyntaxError)	✅ pre-existing	—
+
+B3	expressions/ast_nodes.py (9 node types + ExprSyntaxError)	✅ pre-existing	
+
 B4	expressions/parser.py Pratt parser, ExprSyntaxError(offset,msg)	✅	precedence table + malformed-input tests; ~260 lines
+
 B5	expressions/contexts.py, 11 contexts, build_github_context	✅	resolves in real git repo (test_contexts.py)
+
 B6	expressions/evaluator.py, GitHub loose equality	✅	CSV table test §7 passes (test_expression_table.py, 46 rows)
+
 B7	expressions/functions.py (12 fns), hashFiles sorts paths	✅	cross-platform determinism + order-independence tests (test_functions.py:164-212)
+
 B8	core/graph.py impl	✅	cycle, diamond, single-job tests (test_graph.py)
+
 B9	validation/layer3_semantic.py	✅ partial by design	E301, E302 (uses core.graph.find_cycle), E303, E309, E310, E311, E312 shipped + 21 tests. E304–E308, E313–E317, W318 left for other owners (noted in module docstring)
+
 B10	planner/matrix.py — product, then include, then exclude	✅ deviation	Implemented GitHub's real order: product → exclude → include (docs order, not plan order — include can resurrect excluded legs). Include merges into legs it doesn't overwrite (checked vs original product values). Exact docs 6-leg output asserted (test_matrix.py, 11 tests)
+
 B11	planner/plan.py build_plan(): matrix → DAG → topo waves; "evaluate job-level if: here"	✅ deviation	Matrix expansion + instance DAG + topo_waves into ExecutionPlan(waves). Job-level if: is not evaluated at plan time — it's runtime (Dev C runner); planner is purely structural (test_plan.py, 13 tests)
+
 B12	cli/cmd_graph.py ASCII DAG render	✅	render_plan() pure + _flows() own discovery; smoke-tested (test_cmd_graph.py, 6 tests)
+
 B13	skip semantics: failed needs → SKIPPED unless always()/failure(); fail-fast cancels siblings. "Lives in plan.py"	✅ deviation	Lives in executor/runner.py (Dev C tier-5): _blocking_failure, _wants_to_run_regardless (textual marker match), _collect fail-fast cancellation. Planner contributes nothing. 3 focused fail-fast tests added this session
+
 Deliberate deviations from the written plan (all documented in code)
 1. B10 matrix order — plan says include then exclude; GitHub actually does exclude first. The module header ("include AFTER exclude") and the current GitHub docs (6-leg example) agree, and the implementation asserts the exact documented output.
+
 2. B11 if: evaluation — deferred to runtime; the runner's textual always()/failure()/cancelled() check needs upstream results that don't exist at plan time.
+
 3. B13 location — skip/fail-fast landed in runner.py, not plan.py, because the decision needs runtime facts (module docstring lines 10-13 say so explicitly).
 Delivered this session
 B10 (planner/matrix.py + 11 tests) → B11 (planner/plan.py + 13 tests) → B9 (layer3_semantic.py + 21 tests, E301/E302/E303/E309/E310/E311/E312) → CSV engine table (46 rows) → B12 (cmd_graph.py + 6 tests) → full make check gate → 3 fail-fast tests (B13 coverage).
@@ -507,16 +542,20 @@ module, grep for its call site.**
   workflow. Now checks `container:` only, plus untagged images (implicit
   `:latest`). W402's moving-ref list was the arbitrary set `("v1","v2")`; it is
   a `v\d+` regex now.
+
 - **The installed `post-commit` hook was broken**: it ran
   `yeet run --event push --sha $(git rev-parse HEAD)` and `yeet run` has never
   had a `--sha`. Every commit would have printed "No such option". D27's
   acceptance criterion could not have passed. Removed (the sha is read from
   `.git/HEAD` anyway) and both shims now `cd` to the repo top level.
+
 - **`hooks install` silently overwrote a user's own hooks.** It now refuses
   unless the hook carries our marker, with `--force` to override.
+
 - **`RunConsole` printed the `::group::` header before the job header**, because
   the directive branch returned before the header tracking. Also suppressed the
   group header when it just repeats the step name.
+  
 - **CI had never run.** `.github/workflows/ci.yml` lived at
   `yeet/.github/workflows/` — GitHub only discovers workflows at the **repo
   root**. Moved to `/.github/workflows/ci.yml` with `working-directory: yeet`.
