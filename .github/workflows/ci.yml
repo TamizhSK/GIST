@@ -125,7 +125,12 @@ jobs:
           # No flag: a script sitting in a clone installs that clone.
           .\install.ps1
           & "$env:LOCALAPPDATA\yeet\bin\yeet.cmd" --version
-          & "$env:LOCALAPPDATA\yeet\bin\yeet.cmd" doctor
+          # YEET_NO_MODIFY_PATH is set above, so the launcher is deliberately
+          # NOT on PATH — and `doctor` checks exactly that and exits 1. Put it
+          # on PATH for this call, or the job asserts the opposite of what the
+          # environment variable asked for.
+          $env:PATH = "$env:LOCALAPPDATA\yeet\bin;$env:PATH"
+          yeet doctor
 
       - name: twice, without duplicating anything
         shell: powershell
@@ -170,6 +175,15 @@ jobs:
           ~/.local/bin/yeet --version
           ./install.sh --local   # idempotent, and the explicit spelling
           ~/.local/bin/yeet doctor || true   # no Docker on the macOS runner
+
+      - name: with no SHELL and no LANG, the way cron and a container run it
+        if: matrix.image == ''
+        run: |
+          # `$SHELL` unset is routine — a container, a cron job, a CI step —
+          # and `${SHELL##*/}` under `set -u` is fatal. This installer died
+          # that way at its very last step, after doing all of its work.
+          env -i HOME="$HOME" PATH="$PATH" YEET_NO_MODIFY_PATH=1 sh ./install.sh
+          ~/.local/bin/yeet --version
 
       - name: a copy outside a clone still installs from GitHub
         if: matrix.image == ''

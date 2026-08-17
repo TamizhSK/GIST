@@ -102,20 +102,33 @@ function Stop-Install([string]$Text) {
 
 function Write-Banner {
     if (-not $script:Tty) { Write-Plain 'yeet installer'; Write-Host ''; return }
-    if (-not $script:Unicode) {
-        Write-Colour '  Y E E T   a local GitHub Actions runner' 'Yellow'
-        Write-Host ''
-        return
+    # The same six rows install.sh prints, in the same sunset order, in
+    # whichever alphabet this console can write.
+    #
+    # The ASCII form is not the rare path here — it is the DEFAULT one. Windows
+    # PowerShell 5.1 runs on codepage 437 or 1252 on a stock box, never 65001,
+    # and 5.1 is what this file exists to support. Gating the only wordmark on
+    # UTF-8 meant the machines this installer most targets were the ones that
+    # never saw it.
+    if ($script:Unicode) {
+        $rows = @(
+            '  ████     ████  █████████  █████████  █████████████',
+            '   ████   ████   ████       ████            ████    ',
+            '    ████ ████    ███████    ███████         ████    ',
+            '     ███████     ███████    ███████         ████    ',
+            '       ████      ████       ████            ████    ',
+            '       ████      █████████  █████████       ████    '
+        )
+    } else {
+        $rows = @(
+            '  ####     ####  #########  #########  #############',
+            '   ####   ####   ####       ####            ####    ',
+            '    #### ####    #######    #######         ####    ',
+            '     #######     #######    #######         ####    ',
+            '       ####      ####       ####            ####    ',
+            '       ####      #########  #########       ####    '
+        )
     }
-    # The same six rows install.sh prints, in the same sunset order.
-    $rows = @(
-        '  ████     ████  █████████  █████████  █████████████',
-        '   ████   ████   ████       ████            ████    ',
-        '    ████ ████    ███████    ███████         ████    ',
-        '     ███████     ███████    ███████         ████    ',
-        '       ████      ████       ████            ████    ',
-        '       ████      █████████  █████████       ████    '
-    )
     $colours = @('DarkBlue', 'DarkMagenta', 'Magenta', 'Magenta', 'Yellow', 'Yellow')
     Write-Host ''
     for ($i = 0; $i -lt $rows.Count; $i++) {
