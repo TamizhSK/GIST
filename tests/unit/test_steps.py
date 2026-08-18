@@ -18,6 +18,7 @@ from yeet.executor import state_files
 from yeet.executor.script import script_suffix
 from yeet.executor.steps import Chunk, StepLoopConfig, StepRequest, run_steps
 from yeet.executor.workspace import create
+from yeet.expressions.contexts import Contexts
 
 
 class FakeExec:
@@ -195,6 +196,33 @@ def test_github_path_is_prepended_for_the_next_step(tmp_path):
     run_steps(config, executor)
 
     assert executor.requests[1].env["PATH"].startswith("/opt/tool/bin")
+
+
+def test_a_step_name_resolves_its_expressions(tmp_path):
+    """`vibe: build ${{ matrix.flavor }}` is how a matrix leg says which leg it
+    is. Printed literally, two legs show the same row twice — which is what the
+    tree did while the job headers beside it read `build (flavor vanilla)`."""
+    sink = ListSink()
+    job = make_job(steps=[make_step("echo hi", name="build ${{ matrix.flavor }}")])
+    config = build_config(tmp_path, job, sink=sink)
+    config.contexts = Contexts(matrix={"flavor": "vanilla"})
+
+    results = run_steps(config, FakeExec((0, out("hi\n"))))
+
+    assert results[0].step_name == "build vanilla"
+    assert "${{" not in sink.text()
+
+
+def test_an_unnamed_step_labels_itself_with_the_resolved_command(tmp_path):
+    """The `Run <first line>` fallback expands too, and the trim happens after,
+    so the 60 columns are spent on what ran rather than on the expression."""
+    job = make_job(steps=[make_step("echo ${{ matrix.flavor }}")])
+    config = build_config(tmp_path, job)
+    config.contexts = Contexts(matrix={"flavor": "chocolate"})
+
+    results = run_steps(config, FakeExec((0, [])))
+
+    assert results[0].step_name == "Run echo chocolate"
 
 
 def test_step_outputs_are_collected_by_id(tmp_path):

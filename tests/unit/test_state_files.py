@@ -65,6 +65,50 @@ def test_missing_directory_reads_empty(tmp_path):
     assert back["summary"]["text"] == ""
 
 
+# --- what PowerShell actually writes ----------------------------------------
+# Windows PowerShell 5.1's default output encoding is UTF-16 ("Unicode"), so
+# `"k=v" >> $env:GITHUB_OUTPUT` in a `cooked_on: local` step on Windows lands on
+# disk as UTF-16. Read as UTF-8 that parsed into a key nobody could ever
+# reference, so the step went green with an output that was silently empty.
+
+
+def test_utf16_le_with_a_bom_is_read(tmp_path):
+    """The FIRST write from PowerShell 5.1: BOM, then UTF-16 LE."""
+    files = state_files.prepare(tmp_path)
+    files["output"].write_bytes(b"\xff\xfe" + "baked=vanilla\r\n".encode("utf-16-le"))
+    assert state_files.read_back(tmp_path)["output"] == {"baked": "vanilla"}
+
+
+def test_utf16_le_without_a_bom_is_read(tmp_path):
+    """The appends AFTER it: `>>` onto an existing file repeats no BOM, so the
+    NUL pattern is the only evidence left."""
+    files = state_files.prepare(tmp_path)
+    files["output"].write_bytes("baked=vanilla\r\nlayer=two\r\n".encode("utf-16-le"))
+    assert state_files.read_back(tmp_path)["output"] == {"baked": "vanilla", "layer": "two"}
+
+
+def test_utf16_be_without_a_bom_is_read(tmp_path):
+    files = state_files.prepare(tmp_path)
+    files["env"].write_bytes("FOO=bar\n".encode("utf-16-be"))
+    assert state_files.read_back(tmp_path)["env"] == {"FOO": "bar"}
+
+
+def test_utf8_with_a_bom_loses_the_bom_not_the_key(tmp_path):
+    """A UTF-8 BOM is what `Set-Content -Encoding UTF8` writes in 5.1. Left in
+    place it becomes part of the first key's name."""
+    files = state_files.prepare(tmp_path)
+    files["output"].write_bytes(b"\xef\xbb\xbf" + b"baked=vanilla\n")
+    assert state_files.read_back(tmp_path)["output"] == {"baked": "vanilla"}
+
+
+def test_plain_utf8_is_still_plain_utf8(tmp_path):
+    """The sniffing must not cost the common case: bash writes UTF-8, including
+    non-ASCII, and it has no BOM and no NULs."""
+    files = state_files.prepare(tmp_path)
+    files["output"].write_bytes("emoji=✅ done\nname=café\n".encode())
+    assert state_files.read_back(tmp_path)["output"] == {"emoji": "✅ done", "name": "café"}
+
+
 def test_yeet_aliases_cover_every_file():
     assert set(state_files.YEET_ALIASES) == set(state_files.ENV_VARS)
     assert state_files.YEET_ALIASES["env"] == "YEET_ENV"

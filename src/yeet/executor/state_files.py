@@ -12,6 +12,7 @@ See docs/architecture.md
 
 from __future__ import annotations
 
+import codecs
 import re
 from pathlib import Path
 
@@ -93,9 +94,56 @@ def path_entries(back: dict[str, dict[str, str]]) -> list[str]:
 
 def _read(path: Path) -> str:
     try:
-        return path.read_text(encoding="utf-8", errors="replace")
+        return _decode(path.read_bytes())
     except OSError:
         return ""
+
+
+def _decode(raw: bytes) -> str:
+    """Bytes to text, believing the file rather than the platform.
+
+    WHY THIS IS NOT JUST `read_text("utf-8")`. On Windows the step's shell is
+    PowerShell, and Windows PowerShell 5.1 writes UTF-16 from `>>` and
+    `Out-File` — its default output encoding is "Unicode", not UTF-8. So
+
+        "baked=vanilla" >> $env:GITHUB_OUTPUT
+
+    lands on disk as `b'b\\x00a\\x00k\\x00e\\x00d\\x00=\\x00...'`. Decoded as
+    UTF-8 that is a key of `b\\x00a\\x00k\\x00e\\x00d\\x00` — which parses,
+    which is the whole problem: `${{ steps.baked.outputs.baked }}` resolved to
+    the empty string, the step stayed green, and nothing anywhere said why. A
+    silently empty output is the worst failure this file can have.
+
+    BOM first, because PowerShell writes one. Then, for the appends that follow
+    it (`>>` to a file that already exists does NOT repeat the BOM), the NUL
+    pattern: real UTF-8 state-file content never contains a NUL byte, and
+    UTF-16 text that is mostly ASCII is half NULs, in the low half for LE and
+    the high half for BE. `errors="replace"` on the final path for the same
+    reason it was always there — half a step's outputs beats crashing the run.
+    """
+    if not raw:
+        return ""
+    # UTF-32 LE begins with the UTF-16 LE BOM, so it has to be tested first.
+    for bom, encoding in (
+        (codecs.BOM_UTF32_LE, "utf-32"),
+        (codecs.BOM_UTF32_BE, "utf-32"),
+        (codecs.BOM_UTF8, "utf-8-sig"),
+        (codecs.BOM_UTF16_LE, "utf-16"),
+        (codecs.BOM_UTF16_BE, "utf-16"),
+    ):
+        if raw.startswith(bom):
+            return raw.decode(encoding, errors="replace")
+
+    if b"\x00" in raw:
+        low_nuls = raw[1::2].count(0)
+        high_nuls = raw[0::2].count(0)
+        half = max(len(raw) // 2, 1)
+        if low_nuls > high_nuls and low_nuls * 2 >= half:
+            return raw.decode("utf-16-le", errors="replace")
+        if high_nuls * 2 >= half:
+            return raw.decode("utf-16-be", errors="replace")
+
+    return raw.decode("utf-8", errors="replace")
 
 
 def _parse_lines(path: Path) -> list[str]:

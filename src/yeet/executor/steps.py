@@ -60,7 +60,7 @@ TIMEOUT_EXIT_CODE = 124
 LABEL_MAX = 60
 
 
-def label(step: Step) -> str:
+def label(step: Step, contexts: Contexts | None = None, degraded: Degradation | None = None) -> str:
     """The one-line name a step is logged under.
 
     NOT `Step.display_name`, which falls back to the whole of `run:`. That is
@@ -69,15 +69,38 @@ def label(step: Step) -> str:
     group header, and every line after the first is emitted before the Masker
     has seen anything the step produced. GitHub shows `Run <first line>` for
     the same reason.
+
+    EXPANDED when the caller has contexts, because `${{ }}` in a step name is
+    the normal way to tell two matrix legs apart:
+
+        - vibe: build ${{ matrix.flavor }}
+
+    GitHub resolves that; this printed it literally, so a run of two legs showed
+    the same unresolved row twice while the JOB headers beside them said
+    `build (flavor vanilla)` and `build (flavor chocolate)`. The name is the
+    only thing distinguishing the two step rows, and it was the one thing not
+    resolved.
+
+    Contexts are optional because two callers genuinely have none: the lists of
+    SKIPPED steps built for a job that never started (`runner.py`,
+    `docker_backend.py`) exist before any job context does, and a raw name there
+    is honest — nothing was evaluated, so nothing is claimed to have been.
     """
+
+    def resolved(text: str) -> str:
+        return expand(text, contexts, degraded) if degraded is not None else text
+
     if step.name:
-        return step.name
+        return resolved(step.name)
     if step.run:
-        first = step.run.strip().splitlines()[0] if step.run.strip() else ""
+        # Expanded BEFORE the trim, so the 60 columns are spent on the command
+        # the step actually ran rather than on the expression that produced it.
+        script = resolved(step.run).strip()
+        first = script.splitlines()[0] if script else ""
         trimmed = first[: LABEL_MAX - 1] + "…" if len(first) > LABEL_MAX else first
         return f"Run {trimmed}" if trimmed else "Run"
     if step.uses:
-        return step.uses
+        return resolved(step.uses)
     return "<unnamed step>"
 
 
@@ -172,19 +195,21 @@ def run_steps(config: StepLoopConfig, executor: StepExec) -> list[StepResult]:
     while queue:
         step = queue.pop(0)
         index += 1
-        name = label(step)
+
+        # Built per step, and BEFORE the label as well as before `if:`: the
+        # condition is entitled to see `matrix`, `needs`, `env` and the outputs
+        # of earlier steps (every one of those was empty when a single run-wide
+        # Contexts was threaded straight through from `cmd_run`), and so is the
+        # name — `vibe: build ${{ matrix.flavor }}` is how a matrix leg says
+        # which leg it is.
+        step_ctx, step_env = _step_contexts(config, step, exported)
+        name = label(step, step_ctx, config.degraded)
 
         if failed:
             _lifecycle_skip(config, name)
             _conclude(config, step, Status.SKIPPED)
             results.append(StepResult(step_name=name, status=Status.SKIPPED))
             continue
-
-        # Built per step, before `if:` is evaluated: the condition is entitled
-        # to see `matrix`, `needs`, `env` and the outputs of earlier steps, and
-        # every one of those was empty when a single run-wide Contexts was
-        # threaded straight through from `cmd_run`.
-        step_ctx, step_env = _step_contexts(config, step, exported)
 
         if not truthy(step.if_, step_ctx, config.degraded):
             _lifecycle_skip(config, name)
@@ -515,7 +540,9 @@ def _run_one(
     exported: dict[str, str],
     path_entries: list[str],
 ) -> StepResult:
-    name = label(step)
+    # The same contexts the caller labelled with, so the group header and the
+    # tree row cannot disagree about what this step is called.
+    name = label(step, contexts, config.degraded)
     started = time.monotonic()
 
     layout = config.layout.step(index, script_suffix(step.shell, in_container=config.in_container))
