@@ -1,8 +1,9 @@
 """yeet graph — print the job DAG as waves of instances.
 
-The heavy lifting is `build_plan`'s; this command is discovery, the validation
-gate, and rendering. `render_plan` is a pure function so the tree can be
-tested without invoking the CLI.
+The heavy lifting is `build_plan`'s; this command is the validation gate and
+rendering; discovery is `analyzer.discover`'s, shared with `scan` and `check`.
+`render_plan` is a pure function so the tree can be tested without invoking the
+CLI.
 
 If the workflow cannot be built yet (Dev A's parser still landing), say so
 clearly instead of pretending — a graph of nothing is a lie.
@@ -20,6 +21,7 @@ from typing import Annotated
 
 import typer
 
+from yeet.analyzer.discover import discover_flows
 from yeet.cli import EXIT_BAD_WORKFLOW
 from yeet.core.diagnostics import DiagnosticBag
 from yeet.core.ir import Workflow
@@ -82,16 +84,26 @@ def render_plan(wf: Workflow, plan: ExecutionPlan) -> str:
 
 
 def _flows(target: Path) -> list[Path]:
-    """Flow discovery without the analyzer, which is still Dev A's. Precedence:
-    .yeet/flows/ > .github/workflows/ > a root yeet.yml; or the file itself."""
+    """Every flow in the project, in precedence order — or the file itself.
+
+    `analyzer.discover`, the same walk `yeet scan` and `yeet check` use. This
+    command had its own version that globbed `*.yml` in `.yeet/flows` and
+    `.github/workflows` and stopped at the first of the two that matched, which
+    got three things wrong: a project written in `.yaml` had no graph at all, a
+    bare `workflows/` directory had no graph at all, and a monorepo's
+    `packages/api/.github/workflows/ci.yml` was invisible because the glob is
+    not recursive. `scan` listed those files and `graph` said "No flows found"
+    about the same directory.
+
+    Precedence now orders the list rather than truncating it: `.yeet/flows/`
+    first, then `.github/workflows/`, then a bare `workflows/`, then a root
+    `yeet.yml`. Every flow gets drawn, because a graph is a thing you read and
+    hiding four of five flows is not a service.
+    """
     if target.is_file():
         return [target]
-    candidates = list((target / ".yeet" / "flows").glob("*.yml"))
-    if not candidates:
-        candidates = list((target / ".github" / "workflows").glob("*.yml"))
-    if not candidates and (target / "yeet.yml").exists():
-        candidates = [target / "yeet.yml"]
-    return sorted(candidates)
+    flows, _foreign = discover_flows(target)
+    return flows
 
 
 def _render_diagnostics(bag: DiagnosticBag) -> None:
