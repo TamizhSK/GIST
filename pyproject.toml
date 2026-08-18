@@ -99,6 +99,14 @@ markers = [
     "slow: takes more than a second",
 ]
 
+[tool.coverage.run]
+# `--cov=yeet` resolved to the repo-root `yeet/` directory — a docs folder that
+# happens to share the package's name and holds no Python — so every CI run
+# printed "No data was collected" and passed, measuring nothing for months.
+# `source_pkgs` is the spelling that forces the name to be resolved as an
+# importable package, which is `src/yeet` regardless of the working directory.
+source_pkgs = ["yeet"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
