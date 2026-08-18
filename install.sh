@@ -15,7 +15,7 @@
 # Run from a clone, it installs THAT clone — `./install.sh` inside a checkout
 # you have been editing means the checkout, not `main` off the network.
 #
-# Options (after `--` when piped:  ... | sh -s -- --version v0.5):
+# Options (after `--` when piped:  ... | sh -s -- --version v0.6):
 #   --version <ref>   install a tag, branch or commit from GitHub instead
 #   --local           install from THIS clone (the default when there is one)
 #   --help
@@ -197,12 +197,45 @@ rule() { i=0; s=''; while [ "$i" -lt "$1" ]; do s="$s$HZ"; i=$((i + 1)); done; p
 # which is a worse first impression than plain text. `TTY` says "may I use
 # colour"; `UNICODE` says "may I use these characters". They are different
 # questions and this used to conflate them.
-_BAND_1='38;5;62'    # indigo
-_BAND_2='38;5;97'    # violet
-_BAND_3='38;5;133'   # magenta
-_BAND_4='38;5;168'   # rose
-_BAND_5='38;5;209'   # coral, the brand accent
-_BAND_6='38;5;215'   # the low sun
+# TWELVE STOPS, AND TRUECOLOUR WHERE THERE IS ANY. Six stops in the 256-colour
+# cube is what made this look like three flat bands rather than a sunset: the
+# cube has no room between indigo and violet, so `sunset(0.00)` and
+# `sunset(0.09)` both quantise to 62, and half the ramp collapses on the way
+# in. `38;2;R;G;B` carries the exact values `theme.sunset()` produces and the
+# gradient is smooth for the first time.
+#
+# Sampled from `theme.sunset()` — the same function that draws assets/yeet.svg
+# — so the terminal wordmark and the README's are one palette rather than two
+# that drifted.
+_RAMP_RGB='95;104;216 108;101;216 121;97;216 141;98;210 165;103;200 188;107;190 208;115;176 226;125;160 235;139;140 243;155;124 249;173;125 255;192;125'
+_RAMP_256='62 62 98 98 134 133 169 175 174 210 216 216'
+
+# `$COLORTERM` is how a terminal says it means it. Everything modern sets it —
+# Windows Terminal, iTerm2, VS Code, kitty, alacritty, GNOME Terminal — and
+# anything that does not gets the 256-colour ramp, which still reads as a
+# gradient, just a coarser one.
+case "${COLORTERM:-}" in
+    truecolor|24bit) TRUECOLOR=1 ;;
+    *)               TRUECOLOR=0 ;;
+esac
+
+# Escapes built once, in ramp order, because the bar and the wordmark both walk
+# them left to right and never need to index into the middle.
+RAMP=''
+if [ "$TRUECOLOR" = 1 ]; then
+    for _rgb in $_RAMP_RGB; do RAMP="$RAMP ${ESC}[38;2;${_rgb}m"; done
+else
+    for _idx in $_RAMP_256; do RAMP="$RAMP ${ESC}[38;5;${_idx}m"; done
+fi
+
+#: The wordmark has six rows and the ramp has twelve stops, so it takes every
+#: other one — top of the letters to their baseline.
+WORDMARK_BANDS=''
+_n=0
+for _esc in $RAMP; do
+    case $_n in 0|2|4|7|9|11) WORDMARK_BANDS="$WORDMARK_BANDS $_esc" ;; esac
+    _n=$((_n + 1))
+done
 
 banner() {
     [ "$TTY" = 0 ] && { say "yeet installer"; say ""; return; }
@@ -231,12 +264,14 @@ banner() {
         _R6='     ####      #########  #########       ####    '
     fi
     say ""
-    printf '  %s%s%s\n' "${ESC}[${_BAND_1}m" "$_R1" "$N"
-    printf '  %s%s%s\n' "${ESC}[${_BAND_2}m" "$_R2" "$N"
-    printf '  %s%s%s\n' "${ESC}[${_BAND_3}m" "$_R3" "$N"
-    printf '  %s%s%s\n' "${ESC}[${_BAND_4}m" "$_R4" "$N"
-    printf '  %s%s%s\n' "${ESC}[${_BAND_5}m" "$_R5" "$N"
-    printf '  %s%s%s\n' "${ESC}[${_BAND_6}m" "$_R6" "$N"
+    # Rows and bands walked together, so adding a row to the art cannot leave
+    # it drawn in whatever colour the previous line happened to end on.
+    _n=1
+    for _esc in $WORDMARK_BANDS; do
+        eval "_row=\$_R$_n"
+        printf '  %s%s%s\n' "$_esc" "$_row" "$N"
+        _n=$((_n + 1))
+    done
     printf '\n  %sa local GitHub Actions runner, with a dialect of its own%s\n\n' "$MUTE" "$N"
 }
 
@@ -340,32 +375,46 @@ bar_draw() {
 
     # THE SUNSET, TURNED ON ITS SIDE. The wordmark runs indigo at the top of
     # the letters to the low sun at their baseline; the bar runs the same six
-    # bands left to right, so the thing filling up is visibly the same object
-    # as the thing above it. One escape per band, not per cell — six writes a
-    # frame rather than a hundred and twenty.
+    # stops left to right, so the thing filling up is visibly the same object
+    # as the thing above it. One escape per STOP, not per cell — twelve writes
+    # a frame rather than a hundred and twenty.
     _fill=$((PCT * _w / 100))
-    _i=0; _bar=''; _band=-1
-    while [ "$_i" -lt "$_w" ]; do
-        if [ "$_i" -lt "$_fill" ]; then
-            _b=$((_i * 6 / _w))
-            if [ "$_b" != "$_band" ]; then
-                _band=$_b
-                case $_b in
-                    0) _bar="$_bar${ESC}[${_BAND_1}m" ;;
-                    1) _bar="$_bar${ESC}[${_BAND_2}m" ;;
-                    2) _bar="$_bar${ESC}[${_BAND_3}m" ;;
-                    3) _bar="$_bar${ESC}[${_BAND_4}m" ;;
-                    4) _bar="$_bar${ESC}[${_BAND_5}m" ;;
-                    *) _bar="$_bar${ESC}[${_BAND_6}m" ;;
-                esac
-            fi
-            _bar="$_bar$_FULL"
-        else
-            if [ "$_band" != "-2" ]; then _band=-2; _bar="$_bar$D"; fi
-            _bar="$_bar$_EMPTY"
+    _bar=''
+    _done=0        # cells emitted so far
+    _stop=0        # which of the twelve we are on
+
+    # Walked IN ORDER rather than indexed. The ramp is a space-separated list
+    # of escapes and the bar consumes it left to right exactly once, so there
+    # is no random access to do in a shell that has no arrays.
+    for _esc in $RAMP; do
+        _end=$(((_stop + 1) * _w / 12))
+        [ "$_end" -gt "$_fill" ] && _end=$_fill
+        if [ "$_end" -gt "$_done" ]; then
+            _bar="$_bar$_esc"
+            while [ "$_done" -lt "$_end" ]; do
+                _bar="$_bar$_FULL"
+                _done=$((_done + 1))
+            done
         fi
-        _i=$((_i + 1))
+        _stop=$((_stop + 1))
     done
+
+    # Rounding leaves at most eleven cells unclaimed at 100%; the last stop
+    # takes them, so a finished bar is full rather than one cell short.
+    if [ "$_done" -lt "$_fill" ]; then
+        while [ "$_done" -lt "$_fill" ]; do
+            _bar="$_bar$_FULL"
+            _done=$((_done + 1))
+        done
+    fi
+
+    if [ "$_done" -lt "$_w" ]; then
+        _bar="$_bar$D"
+        while [ "$_done" -lt "$_w" ]; do
+            _bar="$_bar$_EMPTY"
+            _done=$((_done + 1))
+        done
+    fi
 
     if [ "$_lw" -gt 0 ]; then
         # The label is what turns "stuck at 63%" into "stuck at 63% —

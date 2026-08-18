@@ -37,7 +37,7 @@
 .EXAMPLE
   # Pinning a version needs the script on disk — `iex` cannot take arguments.
   irm https://raw.githubusercontent.com/TamizhSK/YEET/main/install.ps1 -OutFile i.ps1
-  .\i.ps1 -Version v0.5
+  .\i.ps1 -Version v0.6
 
 .NOTES
   Under a Restricted execution policy `irm | iex` is refused. That is the
@@ -149,6 +149,39 @@ trap {
     break
 }
 
+# --- the sunset ---------------------------------------------------------------
+# THE SAME TWELVE STOPS install.sh USES, sampled from `theme.sunset()` — the
+# function that also draws assets/yeet.svg — so the wordmark is one palette
+# everywhere instead of three that drifted.
+#
+# WHY NOT `Write-Host -ForegroundColor`: it can only reach the console's
+# sixteen. `DarkBlue`, `Magenta` and `Yellow` are what a six-stop sunset
+# collapses into, which is why the Windows wordmark read as three flat bands of
+# blue, purple and orange while the same six stops on macOS read as a gradient.
+# Sixteen colours cannot express this and no amount of picking better names
+# fixes that.
+#
+# So: real escapes when the host can process them. `SupportsVirtualTerminal` is
+# what PowerShell answers for a console with ENABLE_VIRTUAL_TERMINAL_PROCESSING
+# on — Windows Terminal always, conhost on Windows 10 1703 and later. Where it
+# is false the sixteen-colour version is still there, unchanged.
+$script:Esc = [char]27
+$script:Vt = $false
+try { $script:Vt = [bool]$Host.UI.SupportsVirtualTerminal } catch { $script:Vt = $false }
+
+$script:RampRgb = @(
+    '95;104;216', '108;101;216', '121;97;216', '141;98;210',
+    '165;103;200', '188;107;190', '208;115;176', '226;125;160',
+    '235;139;140', '243;155;124', '249;173;125', '255;192;125'
+)
+$script:Ramp = @()
+foreach ($rgb in $script:RampRgb) { $script:Ramp += "$($script:Esc)[38;2;${rgb}m" }
+$script:Reset = "$($script:Esc)[0m"
+$script:Dim = "$($script:Esc)[38;5;238m"
+
+#: Six rows, twelve stops — every other one, top of the letters to the baseline.
+$script:WordmarkStops = @(0, 2, 4, 7, 9, 11)
+
 function Write-Plain([string]$Text) { Write-Host $Text }
 
 function Write-Colour([string]$Text, [string]$Colour) {
@@ -208,22 +241,41 @@ function Write-Bar {
     if ($fill -gt $width) { $fill = $width }
     if ($script:Unicode) { $full = [char]0x2588; $empty = [char]0x2591 } else { $full = '#'; $empty = '-' }
 
-    Write-Host "`r  [" -NoNewline
-    # One segment per band, each the same length, so the ramp is even.
-    $drawn = 0
-    for ($b = 0; $b -lt 6; $b++) {
-        $upto = [int](($b + 1) * $width / 6)
-        $seg = [Math]::Min($upto, $fill) - $drawn
-        if ($seg -gt 0) {
-            Write-Host (New-Object string $full, $seg) -NoNewline -ForegroundColor $script:BarBands[$b]
-            $drawn += $seg
-        }
-    }
-    if ($width - $drawn -gt 0) {
-        Write-Host (New-Object string $empty, ($width - $drawn)) -NoNewline -ForegroundColor DarkGray
-    }
     $pct = ("{0,3}" -f $script:Pct)
-    Write-Host "] $pct%" -NoNewline
+    if ($script:Vt) {
+        # Twelve stops, one escape each, assembled into a single write. One
+        # write matters: `-NoNewline` in a loop is a flush per segment, and on
+        # a 5.1 console that flickers visibly at ten frames a second.
+        $line = "`r  ["
+        $drawn = 0
+        for ($s = 0; $s -lt 12; $s++) {
+            $upto = [Math]::Min([int](($s + 1) * $width / 12), $fill)
+            if ($upto -gt $drawn) {
+                $line += $script:Ramp[$s] + (New-Object string $full, ($upto - $drawn))
+                $drawn = $upto
+            }
+        }
+        if ($fill -gt $drawn) { $line += (New-Object string $full, ($fill - $drawn)); $drawn = $fill }
+        if ($width -gt $drawn) {
+            $line += $script:Dim + (New-Object string $empty, ($width - $drawn))
+        }
+        $line += $script:Reset + "] $pct%"
+        Write-Host $line -NoNewline
+    } else {
+        Write-Host "`r  [" -NoNewline
+        $drawn = 0
+        for ($b = 0; $b -lt 6; $b++) {
+            $upto = [Math]::Min([int](($b + 1) * $width / 6), $fill)
+            if ($upto -gt $drawn) {
+                Write-Host (New-Object string $full, ($upto - $drawn)) -NoNewline -ForegroundColor $script:BarBands[$b]
+                $drawn = $upto
+            }
+        }
+        if ($width - $drawn -gt 0) {
+            Write-Host (New-Object string $empty, ($width - $drawn)) -NoNewline -ForegroundColor DarkGray
+        }
+        Write-Host "] $pct%" -NoNewline
+    }
     if ($labelW -gt 0) {
         $text = "$($script:BarLabel)"
         if ($text.Length -gt $labelW) { $text = $text.Substring(0, $labelW) }
@@ -324,10 +376,22 @@ function Write-Banner {
             '       ####      #########  #########       ####    '
         )
     }
-    $colours = @('DarkBlue', 'DarkMagenta', 'Magenta', 'Magenta', 'Yellow', 'Yellow')
     Write-Host ''
-    for ($i = 0; $i -lt $rows.Count; $i++) {
-        Write-Host $rows[$i] -ForegroundColor $colours[$i]
+    if ($script:Vt) {
+        # Six exact stops out of the twelve, so the letters fade the way the
+        # SVG does rather than stepping through three console colours.
+        for ($i = 0; $i -lt $rows.Count; $i++) {
+            $stop = $script:Ramp[$script:WordmarkStops[$i]]
+            Write-Host ($stop + $rows[$i] + $script:Reset)
+        }
+    } else {
+        # Sixteen colours is all this host has. Kept because it is still a
+        # wordmark, and a flat one beats a screen of escape codes printed
+        # literally on a console that cannot process them.
+        $colours = @('DarkBlue', 'DarkMagenta', 'Magenta', 'Magenta', 'Yellow', 'Yellow')
+        for ($i = 0; $i -lt $rows.Count; $i++) {
+            Write-Host $rows[$i] -ForegroundColor $colours[$i]
+        }
     }
     Write-Host ''
     Write-Plain '  a local GitHub Actions runner, with a dialect of its own'

@@ -138,14 +138,56 @@ def _path() -> str:
     return ":".join(dict.fromkeys(parts + ["/usr/bin", "/bin", "/usr/sbin"]))
 
 
+#: The twelve stops of `theme.sunset()`, as install.sh emits them in truecolour.
+#: Duplicated here on purpose: a test that derives the expected value the same
+#: way the code does cannot catch the code getting it wrong.
+SUNSET = [
+    "95;104;216",
+    "108;101;216",
+    "121;97;216",
+    "141;98;210",
+    "165;103;200",
+    "188;107;190",
+    "208;115;176",
+    "226;125;160",
+    "235;139;140",
+    "243;155;124",
+    "249;173;125",
+    "255;192;125",
+]
+
+
 def test_the_gradient_is_the_wordmarks_own_sunset() -> None:
-    """The bar runs the same six bands left to right that the letters run top
-    to bottom. Sampled from `theme`-adjacent constants in one place, so the bar
-    and the wordmark cannot drift into two different palettes."""
-    stream, _ = _screen(110)
+    """The bar runs the same ramp left to right that the letters run top to
+    bottom, in the order `theme.sunset()` produces.
+
+    Twelve stops rather than six, and truecolour rather than the 256-colour
+    cube, because the cube has no room between indigo and violet: `sunset(0.00)`
+    and `sunset(0.09)` both quantise to index 62, so half the ramp collapsed on
+    the way in and the result read as three flat bands instead of a sunset.
+    """
+    stream, _ = _screen(110, env={"COLORTERM": "truecolor"})
     frames = [f for f in stream.split("\r") if "%" in f and "█" in f]
     fullest = max(frames, key=lambda f: f.count("█"))
-    bands = [c for c in re.findall(r"\x1b\[(38;5;\d+)m", fullest)]
-    ordered = list(dict.fromkeys(bands))
-    expected = ["38;5;62", "38;5;97", "38;5;133", "38;5;168", "38;5;209", "38;5;215"]
-    assert ordered[: len(expected)] == expected, ordered
+    ordered = list(dict.fromkeys(re.findall(r"\x1b\[38;2;([0-9;]+)m", fullest)))
+    assert ordered == SUNSET, ordered
+
+
+def test_the_wordmark_takes_every_other_stop_of_the_same_ramp() -> None:
+    """Six rows out of twelve stops. One palette for the letters, the bar and
+    assets/yeet.svg — three copies that used to be able to drift."""
+    stream, _ = _screen(110, env={"COLORTERM": "truecolor"})
+    rows = [ln for ln in stream.split("\n") if "█" in ln and "%" not in ln]
+    used = [re.search(r"\x1b\[38;2;([0-9;]+)m", ln).group(1) for ln in rows[:6]]
+    assert used == [SUNSET[i] for i in (0, 2, 4, 7, 9, 11)], used
+
+
+def test_a_terminal_without_truecolor_still_gets_a_gradient() -> None:
+    """`$COLORTERM` unset is not a reason to print one flat colour — the
+    256-colour ramp is coarser and still reads as a fade."""
+    stream, _ = _screen(110, env={"COLORTERM": ""})
+    frames = [f for f in stream.split("\r") if "%" in f and "█" in f]
+    fullest = max(frames, key=lambda f: f.count("█"))
+    assert "38;2;" not in fullest, "truecolour emitted to a terminal that never claimed it"
+    ordered = list(dict.fromkeys(re.findall(r"\x1b\[38;5;(\d+)m", fullest)))
+    assert len(ordered) >= 5, f"only {len(ordered)} distinct colours: {ordered}"
