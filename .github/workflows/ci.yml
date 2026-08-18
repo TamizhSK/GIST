@@ -140,6 +140,36 @@ jobs:
           .\install.ps1 -Local   # idempotent, and the explicit spelling
           & "$env:LOCALAPPDATA\yeet\bin\yeet.cmd" --version
 
+      - name: from the network, where pip narrates on stderr
+        shell: powershell   # 5.1: the edition whose $ErrorActionPreference bit
+        env:                # turns a pip progress line into a fatal error
+          YEET_NO_MODIFY_PATH: "1"
+        run: |
+          # `--version main` forces the git+ URL, and `pip install git+...`
+          # prints "Running command git clone --filter=blob:none --quiet ..."
+          # ON STDERR. Under $ErrorActionPreference='Stop' that became a
+          # terminating NativeCommandError and killed the install at step 3 of
+          # 4 — on a progress message. The clone is the point of this job; the
+          # local install above never reaches that code path.
+          .\install.ps1 -Version main
+          & "$env:LOCALAPPDATA\yeet\bin\yeet.cmd" --version
+
+  installer-gitbash:
+    # Git Bash is what a Windows user reaches for when they see a `curl | sh`
+    # one-liner, and install.sh assumed `venv/bin/python`. A Windows venv puts
+    # it in `venv/Scripts/python.exe`, so the install got to step 3 and died on
+    # "No such file or directory" having already made a venv.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install.sh under Git Bash
+        shell: bash   # this IS Git Bash on a windows runner
+        env:
+          YEET_NO_MODIFY_PATH: "1"
+        run: |
+          ./install.sh
+          ~/.local/bin/yeet --version
+
   installer-posix:
     # The three Linux variants a naive installer breaks on, plus macOS.
     strategy:

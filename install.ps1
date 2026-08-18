@@ -151,9 +151,32 @@ function Invoke-Quiet {
 
     Write-Info "$Label..."
     $log = Join-Path $HomeDir 'install.log'
-    # Call operator with a splatted array, so a path with a space in it stays
-    # one argument. `C:\Users\Tamizh Selvan\` is the classic way this breaks.
-    & $Exe @Arguments *> $log
+
+    # A NATIVE COMMAND WRITING TO STDERR IS NOT AN ERROR, and this is the line
+    # where believing otherwise killed the install. pip narrates its work on
+    # stderr — "Running command git clone --filter=blob:none --quiet ..." — and
+    # with `$ErrorActionPreference = 'Stop'` in force, PowerShell turns each of
+    # those records into a terminating NativeCommandError. The install died at
+    # step 3 of 4 on a PROGRESS MESSAGE, with a stack trace pointing here and
+    # nothing in it naming pip.
+    #
+    # `*> $log` makes it worse rather than better: redirecting the stream is
+    # what wraps stderr as ErrorRecords in the first place.
+    #
+    # The exit code is the only thing that decides whether this worked, which
+    # is what the return below has always used. So stderr goes to the log like
+    # everything else, and `Stop` is restored on the way out for the cmdlets
+    # that genuinely want it.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        # Call operator with a splatted array, so a path with a space in it
+        # stays one argument. `C:\Users\Tamizh Selvan\` is the classic way this
+        # breaks.
+        & $Exe @Arguments *> $log
+    } finally {
+        $ErrorActionPreference = $previous
+    }
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -167,11 +190,55 @@ function Get-PythonVersion([string]$Exe) {
     }
 }
 
+function Get-RedirectedVenvHelp([string]$VenvDir) {
+    @"
+the virtualenv was created somewhere other than $VenvDir.
+
+      That is what a Microsoft Store Python does: it runs in an app container
+      that redirects writes under %LOCALAPPDATA% into its own LocalCache, so
+      the interpreter this installer needs is not where it was put.
+
+      Install Python from python.org (tick "Add python.exe to PATH"), or from
+      winget:
+
+          winget install Python.Python.3.12
+
+      then re-run this installer. `py -3.12` will be preferred automatically.
+"@
+}
+
+function Test-StorePython([string]$Exe, [string[]]$Prefix) {
+    <#
+      Is this the Microsoft Store build? Its writes under %LOCALAPPDATA% are
+      redirected into the app container, which makes it unable to place a
+      virtualenv where we ask for one — see Get-RedirectedVenvHelp.
+
+      Asks the interpreter where it lives rather than guessing from the name:
+      the Store ships an alias called `python3.exe` in
+      %LOCALAPPDATA%\Microsoft\WindowsApps that looks like any other Python.
+    #>
+    try {
+        $probe = $Prefix + @('-c', 'import sys; print(sys.executable)')
+        $where = & $Exe @probe 2>$null
+        if ($LASTEXITCODE -ne 0) { return $false }
+        return ("$where" -match 'WindowsApps|PythonSoftwareFoundation\.Python')
+    } catch {
+        return $false
+    }
+}
+
 function Find-Python {
     <#
       Newest first. `py -3.13` before bare `python`, because the Microsoft Store
       stub named `python.exe` on a machine with no Python installed opens the
       Store instead of running anything, and the probe below is what rejects it.
+
+      A Store Python that DOES run is rejected too, on a second pass. It passes
+      every version check and then cannot put a virtualenv where it is told, so
+      taking it means failing two steps later with a message about a cmdlet
+      that is not recognised. Preferring anything else is the whole fix; if it
+      is genuinely the only Python here, it is still used, and the venv check
+      after creation explains what happened.
     #>
     $candidates = @()
     foreach ($minor in ($MaxTested..$MinMinor)) {
@@ -180,6 +247,7 @@ function Find-Python {
     $candidates += ,@('python3', @())
     $candidates += ,@('python', @())
 
+    $fallback = $null
     foreach ($pair in $candidates) {
         $exe = $pair[0]
         $prefix = $pair[1]
@@ -187,12 +255,18 @@ function Find-Python {
         $probe = $prefix + @('-c', "import sys; sys.exit(0 if sys.version_info >= (3, $MinMinor) else 1)")
         try {
             & $exe @probe 2>$null
-            if ($LASTEXITCODE -eq 0) { return ,@($exe, $prefix) }
+            if ($LASTEXITCODE -ne 0) { continue }
         } catch {
             continue
         }
+        if (Test-StorePython $exe $prefix) {
+            if (-not $fallback) { $fallback = ,@($exe, $prefix) }
+            continue
+        }
+        return ,@($exe, $prefix)
     }
-    return $null
+    if ($fallback) { Write-Warn 'only a Microsoft Store Python was found; it may redirect the virtualenv' }
+    return $fallback
 }
 
 Write-Banner
@@ -320,10 +394,22 @@ if ($Backend -eq 'uv') {
     $venvArgs = $PythonPrefix + @('-m', 'venv', $VenvDir)
     & $PythonExe @venvArgs
     if ($LASTEXITCODE -ne 0) { Stop-Install "could not create a virtualenv in $VenvDir" }
+
+    # CHECK BEFORE USING IT. A Microsoft Store Python runs in an app container
+    # that redirects writes under %LOCALAPPDATA% into
+    #   ...\Packages\PythonSoftwareFoundation.Python.3.x_...\LocalCache\Local\
+    # so `python -m venv` reports success, prints "Actual environment location
+    # may have moved due to redirects, links or junctions", and puts the venv
+    # somewhere other than where it was asked to. The next line then ran
+    # `& $VenvPy` on a path that does not exist, and PowerShell reported it as
+    # "The term '...\python.exe' is not recognized as the name of a cmdlet" —
+    # which reads like a broken script rather than a redirected interpreter.
+    if (-not (Test-Path $VenvPy)) { Stop-Install (Get-RedirectedVenvHelp $VenvDir) }
+
     Invoke-Quiet 'upgrading pip' $VenvPy @('-m', 'pip', 'install', '--upgrade', 'pip') | Out-Null
 }
 
-if (-not (Test-Path $VenvPy)) { Stop-Install "no interpreter at $VenvPy" }
+if (-not (Test-Path $VenvPy)) { Stop-Install (Get-RedirectedVenvHelp $VenvDir) }
 Write-Ok "$HomeDir (python $(Get-PythonVersion $VenvPy))"
 
 # --- 3. the tool and its dependencies ----------------------------------------

@@ -362,7 +362,27 @@ if [ -d "$HOME_DIR" ]; then
 fi
 mkdir -p "$HOME_DIR"
 
-VENV_PY="$HOME_DIR/venv/bin/python"
+# Resolved AFTER the venv exists, by looking — see `resolve_venv` below. It is
+# `bin/python` on Unix and `Scripts/python.exe` under Git Bash, and hardcoding
+# the first is why a Git Bash install got as far as step 3 and then said
+# `/c/Users/.../venv/bin/python: No such file or directory`.
+VENV_PY=''
+VENV_BIN=''
+
+resolve_venv() {
+    if [ -x "$HOME_DIR/venv/bin/python" ]; then
+        VENV_BIN="$HOME_DIR/venv/bin"
+        VENV_PY="$VENV_BIN/python"
+    elif [ -x "$HOME_DIR/venv/Scripts/python.exe" ]; then
+        # Git Bash, MSYS2, Cygwin: a Windows venv, reached through a POSIX path.
+        VENV_BIN="$HOME_DIR/venv/Scripts"
+        VENV_PY="$VENV_BIN/python.exe"
+    else
+        die "the virtualenv has no interpreter in it.
+      Looked in $HOME_DIR/venv/bin and $HOME_DIR/venv/Scripts."
+    fi
+}
+
 if [ "$BACKEND" = uv ]; then
     # `>=3.10,<3.14` is a REQUEST, not a path: uv picks a satisfying
     # interpreter it can already see, and downloads a managed one when it
@@ -383,8 +403,10 @@ if [ "$BACKEND" = uv ]; then
       Re-run with YEET_NO_UV=1 to use python -m venv instead."
         fi
     fi
+    resolve_venv
 else
     "$PYTHON" -m venv "$HOME_DIR/venv" || die "could not create a virtualenv in $HOME_DIR"
+    resolve_venv
     spin "upgrading pip" "$VENV_PY" -m pip install --upgrade pip || \
         warn "could not upgrade pip; continuing with the bundled one"
 fi
@@ -427,7 +449,12 @@ else
 fi
 # `head -1`: `yeet --version` reports the interpreter, the OS and Docker under
 # the version line now, and all four inside one `ok` bullet reads as a fault.
-ok "$("$HOME_DIR/venv/bin/yeet" --version 2>/dev/null | head -1 || echo yeet)"
+# `$VENV_BIN`, not `venv/bin`: under Git Bash the executable is
+# `venv/Scripts/yeet.exe`. `.exe` is appended only when it is there, so this
+# stays one line on both.
+VENV_YEET="$VENV_BIN/yeet"
+[ -x "$VENV_YEET" ] || VENV_YEET="$VENV_BIN/yeet.exe"
+ok "$("$VENV_YEET" --version 2>/dev/null | head -1 || echo yeet)"
 
 # ── 4. a launcher on PATH ─────────────────────────────────────────────────────
 # A tiny exec shim rather than a symlink: a symlink into the venv works, but a
@@ -438,7 +465,7 @@ mkdir -p "$BIN_DIR"
 cat > "$BIN_DIR/yeet" <<EOF
 #!/bin/sh
 # Installed by the yeet installer. Delete this file and $HOME_DIR to remove.
-exec "$HOME_DIR/venv/bin/yeet" "\$@"
+exec "$VENV_YEET" "\$@"
 EOF
 chmod 755 "$BIN_DIR/yeet"
 
