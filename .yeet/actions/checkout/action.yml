@@ -18,8 +18,4 @@ runs:
           mkdir -p "$dst"
           cp -rT "$src" "$dst"
         fi
-<<<<<<< HEAD
       shell: bash
-=======
-      shell: bash
->>>>>>> eba58c7f691623778a290ef496a9f858e4dcc531
