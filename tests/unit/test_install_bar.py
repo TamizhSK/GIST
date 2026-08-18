@@ -15,17 +15,24 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from support.pty_capture import bar_lines, capture, render  # noqa: E402
-
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = ROOT / "install.sh"
 
-pytestmark = pytest.mark.skipif(
-    sys.platform == "win32" or not INSTALLER.exists(),
-    reason="install.sh under a pty; Windows has install.ps1 instead",
-)
+# BEFORE the import below, and that ordering is the whole point. `pty_capture`
+# imports `fcntl`, `pty` and `termios`, none of which exist on Windows, and a
+# module-level import runs during COLLECTION — before any mark is evaluated. A
+# `pytestmark = skipif(...)` at the bottom of this block therefore cannot save
+# it: the import has already raised, and pytest reports a collection error that
+# fails the whole run rather than skipping one file. That is exactly how this
+# file went green on macOS and red on all four Windows jobs.
+if sys.platform == "win32":  # pragma: no cover - asserted by the Windows matrix
+    pytest.skip("install.sh under a pty; Windows has install.ps1", allow_module_level=True)
+if not INSTALLER.exists():  # pragma: no cover - a wheel with no repo around it
+    pytest.skip("install.sh is not shipped in the package", allow_module_level=True)
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from support.pty_capture import bar_lines, capture, render  # noqa: E402
 
 
 def _screen(cols: int, args: list[str] | None = None, env: dict[str, str] | None = None):
