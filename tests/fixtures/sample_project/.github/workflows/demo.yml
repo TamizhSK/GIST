@@ -1,0 +1,13 @@
+name: Yeet Demo Workflow
+
+on: [push]
+
+jobs:
+  demo-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Say Hello
+        run: echo "Hello from the sample project!"
+
+      - name: List files
+        run: ls -la
