@@ -34,7 +34,11 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Final, TextIO
+from typing import Final, TextIO, TypeVar
+
+_G = TypeVar("_G", bound=tuple[str, ...])
+"""One glyph set — `_encodable` returns whichever of two it is handed, so the
+call site keeps the arity it declared (the panel's seven, the spinner's four)."""
 
 # Status Vocabulary
 STATUS_SLAYED: Final[str] = "slayed"
@@ -80,24 +84,56 @@ BLANK: Final[str] = "    "
 # are printed on EVERY line, including into logs that get read back on a
 # machine we know nothing about — the panel is drawn once, at the end, and it
 # is the last thing the user looks at. So it takes the box characters when the
-# stream can encode them and falls back to `+ - |` when it cannot.
-#
-# Asked of the stream rather than of `LANG`: a UTF-8 locale piped into a file
-# opened as cp1252 still raises, and the encoding the bytes will actually be
-# written with is the only thing that answers the question.
+# stream can encode them and falls back to `+ - |` when it cannot — see
+# `_encodable` for how that question is asked.
 _PANEL_UNICODE = ("\u256d", "\u256e", "\u2570", "\u256f", "\u2500", "\u2502", "\u00b7")
 _PANEL_ASCII = ("+", "+", "+", "+", "-", "|", "*")
 
 
 def panel_glyphs(stream: TextIO | None = None) -> tuple[str, str, str, str, str, str, str]:
     """`(tl, tr, bl, br, horizontal, vertical, bullet)` this stream can print."""
+    return _encodable(stream, _PANEL_UNICODE, _PANEL_ASCII)
+
+
+# The spinner a RUNNING job or step wears in the live tree. A dot that swells
+# and shrinks, rather than the `-\|/` windmill it replaces: the windmill reads
+# as four unrelated characters flickering in place, and at eight refreshes a
+# second what the eye actually wants from a "still working" mark is one shape
+# breathing.
+#
+# Four frames, small -> big -> small, so the cycle is symmetric and there is no
+# jump between the last frame and the first.
+#
+# `·` is the same U+00B7 the summary panel's bullet already uses, and both it
+# and `•` exist in cp1252 — but `●` does not, and cp437 has neither of the
+# larger two. So this is asked of the stream exactly as the panel is, and the
+# ASCII pulse is a real pulse rather than a punishment: `.oOo` is the same
+# shape in 7 bits.
+_SPINNER_UNICODE = ("·", "•", "●", "•")
+_SPINNER_ASCII = (".", "o", "O", "o")
+
+
+def spinner_frames(stream: TextIO | None = None) -> tuple[str, ...]:
+    """The pulse frames this stream can print, in order."""
+    return _encodable(stream, _SPINNER_UNICODE, _SPINNER_ASCII)
+
+
+def _encodable(stream: TextIO | None, preferred: _G, fallback: _G) -> _G:
+    """`preferred` when every glyph in it survives the stream's encoding.
+
+    Asked of the STREAM rather than of `LANG`: a UTF-8 locale piped into a file
+    opened as cp1252 still raises, and the encoding the bytes will actually be
+    written with is the only thing that answers the question. An encoding no
+    codec knows is treated as hostile, because a `LookupError` at draw time is
+    the same outage as a `UnicodeEncodeError`.
+    """
     target = stream if stream is not None else sys.stdout
     encoding = getattr(target, "encoding", None) or "ascii"
     try:
-        "".join(_PANEL_UNICODE).encode(encoding)
+        "".join(preferred).encode(encoding)
     except (LookupError, UnicodeEncodeError):
-        return _PANEL_ASCII
-    return _PANEL_UNICODE
+        return fallback
+    return preferred
 
 
 PANEL_CORNER: Final[str] = "+"

@@ -52,15 +52,22 @@ from yeet.reporting.theme import (
     SYMBOL_SKIP,
     color_level,
     format_summary,
+    spinner_frames,
 )
 
 REFRESH_HZ = 8
-SPINNER_FRAMES = "-\\|/"
-SPINNER_INTERVAL_S = 0.1
-"""The classic four-frame ASCII spinner — `-\\|/` — not one of rich's Braille
-`dots` frames: those are Unicode and a legacy Windows console codepage
-(cp1252, cp437, ...) cannot encode them, which is a crash waiting to happen
-on exactly the platform most likely to lack a real terminal already."""
+SPINNER_INTERVAL_S = 0.14
+"""One frame per ~7Hz, just under `Live`'s own 8Hz refresh, so every frame is
+actually drawn once. The four frames make a 0.56s breath — slow enough to read
+as one dot swelling and shrinking rather than as four characters flickering,
+which is what the old `-\\|/` windmill looked like at this refresh rate.
+
+The frames themselves come from `theme.spinner_frames`, asked of the stream:
+`·•●•` where the encoding can carry it and `.oOo` where it cannot. Not one of
+rich's Braille `dots` spinners — those are Unicode with no fallback, and a
+legacy Windows console codepage (cp1252, cp437, ...) cannot encode them at all,
+which is a crash waiting to happen on exactly the platform most likely to lack
+a real terminal already."""
 LIVE_TAIL_LINES = 20
 """How many stdout/stderr lines a still-running, non-verbose step shows. GH
 Actions streams the tail of a running step's log too — the point of "live" is
@@ -143,15 +150,20 @@ class _SpinnerLine:
     One instance is cached per running node and reused across renders (see
     `LiveRunConsole._label`) — a fresh instance every frame would still show
     *a* spinner, but always frame zero, which is not a spinner.
+
+    The frames are handed in rather than read from a module constant: which set
+    is safe is a property of the STREAM being written to, and the console that
+    owns the stream is the only thing that knows.
     """
 
-    def __init__(self, prefix: str, name: str, style: str) -> None:
+    def __init__(self, prefix: str, name: str, style: str, frames: tuple[str, ...]) -> None:
         self.prefix = prefix
         self.name = name
         self.style = style
+        self.frames = frames
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        frame = SPINNER_FRAMES[int(time.monotonic() / SPINNER_INTERVAL_S) % len(SPINNER_FRAMES)]
+        frame = self.frames[int(time.monotonic() / SPINNER_INTERVAL_S) % len(self.frames)]
         yield Text(f"{self.prefix}{frame} {self.name}", style=self.style)
 
 
@@ -200,6 +212,10 @@ class LiveRunConsole:
         self.out = out if out is not None else sys.stdout
         self._color = color
         self.verbose = verbose
+        # Asked once, of the stream this console will actually write to, rather
+        # than per frame: the answer cannot change mid-run, and a probe inside
+        # `__rich_console__` would run eight times a second per running node.
+        self._spinner_frames = spinner_frames(self.out)
         self._console = Console(
             file=self.out,
             color_system="auto" if color else None,
@@ -331,7 +347,9 @@ class LiveRunConsole:
     ) -> RenderableType:
         if status == Status.RUNNING.value:
             if node.spinner is None:
-                node.spinner = _SpinnerLine(prefix, name, style="bold yellow")
+                node.spinner = _SpinnerLine(
+                    prefix, name, style="bold yellow", frames=self._spinner_frames
+                )
             return node.spinner
         icon, style = _GLYPHS.get(status, ("[?]", "white"))
         suffix = f" ({_fmt_duration(duration_s)})" if duration_s is not None else ""

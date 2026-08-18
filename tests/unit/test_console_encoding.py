@@ -72,6 +72,34 @@ def test_a_utf8_stream_still_gets_the_box():
     assert theme.panel_glyphs(stream) == theme._PANEL_UNICODE
 
 
+@pytest.mark.parametrize("encoding", LEGACY_ENCODINGS)
+def test_the_spinner_falls_back_to_a_pulse_it_can_actually_write(encoding):
+    """`·•●•` is the live tree's spinner; `●` is in neither legacy codepage, and
+    cp437 has none of the three. The fallback has to be a real pulse rather than
+    a single frame, or the "still working" mark stops moving."""
+    frames = theme.spinner_frames(_legacy_stream(encoding))
+
+    assert frames == theme._SPINNER_ASCII
+    assert len(set(frames)) > 1, "a spinner needs more than one distinct frame"
+    for frame in frames:
+        frame.encode(encoding)  # raises if the fallback is not actually safe
+
+
+def test_a_utf8_stream_gets_the_dots():
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", errors="strict")
+    assert theme.spinner_frames(stream) == theme._SPINNER_UNICODE
+
+
+def test_the_spinner_pulses_symmetrically():
+    """Small -> big -> small, so there is no jump from the last frame back to
+    the first. Asserted on both sets, because the ASCII one is not a second-class
+    citizen — it is what every legacy Windows console gets."""
+    for frames in (theme._SPINNER_UNICODE, theme._SPINNER_ASCII):
+        assert len(frames) == 4
+        assert frames[1] == frames[3], "the rise and the fall must share a frame"
+        assert frames[0] != frames[2], "the small and big ends must differ"
+
+
 def test_an_unknown_encoding_is_treated_as_hostile():
     """A stream with a name no codec knows must degrade, not raise."""
 
