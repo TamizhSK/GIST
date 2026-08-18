@@ -9,7 +9,8 @@ machine. No cloud, no account, no CI minutes.
 
 It even speaks a **dialect of its own** — `vibe`, `the_grind`, `moves`, `drip`,
 `tea` — while running canonical GitHub Actions files unchanged. Both spellings,
-side by side, in one repo.
+side by side, in one repo. The whole table, and how to write a flow with it, is
+in [`docs/writing-flows.md`](docs/writing-flows.md).
 
 ```bash
 yeet scan bestie          # what is this project, and what flows does it have?
@@ -121,19 +122,32 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
 ```
 
 Git Bash on Windows works too, with the same `curl | sh` line as Linux — it
-gets a Windows virtualenv and a launcher Git Bash can run.
+gets a Windows virtualenv, a launcher Git Bash can run, and a `yeet.cmd` next
+to it so cmd.exe and PowerShell find the same install.
 
-**Using it in the terminal you installed from.** New terminals pick `yeet` up
-on their own; the one you are standing in does not, because no process can put
-anything on the PATH of the shell that started it. That is the one manual step,
-and it is one line:
+**PATH, on all three platforms.** Both installers make `yeet` permanent for
+*every* shell on the machine, not only the one you installed from:
+
+| Platform | What is written |
+|---|---|
+| Linux, macOS, WSL | a `PATH` line in `~/.bashrc` (or `~/.bash_profile`), `~/.zshrc`, `~/.config/fish/config.fish` and `~/.profile` — whichever of those shells the machine actually has, plus `~/.profile` always |
+| Windows (`install.ps1`) | the **user PATH** in the registry, read by cmd.exe, PowerShell and every new Git Bash window; the current PowerShell session is fixed too, so `yeet` works immediately |
+| Windows (Git Bash + `install.sh`) | both halves: the shell profile *and* the Windows user PATH |
+
+Every edit is idempotent — re-running the installer adds nothing a second time
+— and marked `# added by the yeet installer` so it is easy to find and remove.
+`YEET_NO_MODIFY_PATH=1` turns all of it off.
+
+Windows only: `.\install.ps1 -System` (or `$env:YEET_SYSTEM_PATH=1`) *also*
+adds it to the machine-wide PATH for every account. That one needs an elevated
+prompt; nothing else here does.
+
+**The terminal you installed from.** On Windows PowerShell it just works. On
+POSIX no process can change the environment of the shell that started it, so
+either open a new terminal or source one line:
 
 ```bash
 . "$HOME/.local/share/yeet/env"     # fish: source ~/.local/share/yeet/env.fish
-```
-
-```powershell
-$env:PATH = "$env:LOCALAPPDATA\yeet\bin;$env:PATH"
 ```
 
 **If the wordmark comes out as boxes or `?`.** Whether a terminal can draw
@@ -309,8 +323,12 @@ compatibility corpus — all validating clean.
 
 ## Start here
 
+- **[`docs/writing-flows.md`](docs/writing-flows.md)** — the manual for USING
+  it: the dialect in one table, where yeet looks for flow files, every command
+  and flag, and how to write a step that runs on Windows too.
 - **[`docs/handbook.md`](docs/handbook.md)** — the twenty-minute orientation:
-  architecture, every command, how we work. Read this first.
+  architecture, every command, how we work. Read this first *if you are working
+  on yeet itself*.
 - [`docs/getting-started.md`](docs/getting-started.md) — machine setup and the
   daily dev loop.
 - [`docs/architecture.md`](docs/architecture.md) — the design rationale
