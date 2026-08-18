@@ -54,7 +54,7 @@ def to_sarif(bag: DiagnosticBag) -> str:
                 "tool": {
                     "driver": {
                         "name": "yeet",
-                        "informationUri": "https://github.com/TamizhSK/GIST",
+                        "informationUri": "https://github.com/TamizhSK/YEET",
                     }
                 },
                 "results": results,

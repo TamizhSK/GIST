@@ -10,7 +10,7 @@ backports to older tags.
 Please **do not** open a public issue.
 
 Use GitHub's private reporting — [Security → Report a
-vulnerability](https://github.com/TamizhSK/GIST/security/advisories/new) — or
+vulnerability](https://github.com/TamizhSK/YEET/security/advisories/new) — or
 email **tamizhazhagansk@gmail.com** with `yeet security` in the subject.
 
 Include the version (`yeet --version`), the OS, and the smallest workflow file

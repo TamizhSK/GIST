@@ -7,7 +7,7 @@ review.
 ## Setup
 
 ```bash
-git clone https://github.com/TamizhSK/GIST && cd GIST
+git clone https://github.com/TamizhSK/YEET && cd GIST
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
 pip install -e ".[dev]" && pre-commit install
 make check                                          # must be green before you start

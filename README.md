@@ -105,19 +105,19 @@ virtualenv.
 **Linux, macOS, WSL**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TamizhSK/GIST/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/TamizhSK/YEET/main/install.sh | sh
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-irm https://raw.githubusercontent.com/TamizhSK/GIST/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/TamizhSK/YEET/main/install.ps1 | iex
 ```
 
 If that is refused, your execution policy is doing its job. For one command:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/TamizhSK/GIST/main/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/TamizhSK/YEET/main/install.ps1 | iex"
 ```
 
 Git Bash on Windows works too, with the same `curl | sh` line as Linux — it
@@ -145,7 +145,7 @@ yeet doctor     # is this machine set up to run a workflow, and if not, what to 
 Prefer to read the script first (you should):
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/TamizhSK/GIST/main/install.sh
+curl -fsSLO https://raw.githubusercontent.com/TamizhSK/YEET/main/install.sh
 less install.sh && sh install.sh
 ```
 
@@ -159,7 +159,7 @@ and no way to accidentally install `main` over the branch you are editing:
 Pin a published version instead, from anywhere:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TamizhSK/GIST/main/install.sh | sh -s -- --version v0.2
+curl -fsSL https://raw.githubusercontent.com/TamizhSK/YEET/main/install.sh | sh -s -- --version v0.2
 ./install.sh --version main   # from inside a clone: fetch, don't use the clone
 ```
 
@@ -167,8 +167,8 @@ Or install straight with [pipx](https://pipx.pypa.io) or
 [uv](https://docs.astral.sh/uv/):
 
 ```bash
-pipx install git+https://github.com/TamizhSK/GIST
-uv tool install git+https://github.com/TamizhSK/GIST
+pipx install git+https://github.com/TamizhSK/YEET
+uv tool install git+https://github.com/TamizhSK/YEET
 ```
 
 Needs **Python 3.10+** — or nothing at all: where
@@ -310,7 +310,7 @@ compatibility corpus — all validating clean.
 ## Development
 
 ```bash
-git clone https://github.com/TamizhSK/GIST && cd GIST
+git clone https://github.com/TamizhSK/YEET && cd GIST
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pre-commit install

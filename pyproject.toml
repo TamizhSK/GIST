@@ -53,10 +53,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/TamizhSK/GIST"
-Repository = "https://github.com/TamizhSK/GIST"
-Issues = "https://github.com/TamizhSK/GIST/issues"
-Changelog = "https://github.com/TamizhSK/GIST/releases"
+Homepage = "https://github.com/TamizhSK/YEET"
+Repository = "https://github.com/TamizhSK/YEET"
+Issues = "https://github.com/TamizhSK/YEET/issues"
+Changelog = "https://github.com/TamizhSK/YEET/releases"
 
 [project.optional-dependencies]
 # `yeet run --tui`. Optional on purpose: a workflow runner that will not start

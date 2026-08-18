@@ -3,7 +3,7 @@
   yeet installer for Windows.
 
 .DESCRIPTION
-  irm https://raw.githubusercontent.com/TamizhSK/GIST/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/TamizhSK/YEET/main/install.ps1 | iex
 
   Does what install.sh does, in the same order and with the same layout on
   disk: finds a Python 3.10+, builds a virtualenv that belongs to yeet alone,
@@ -24,11 +24,11 @@
   in one, so this only says out loud what would have happened anyway.
 
 .EXAMPLE
-  irm https://raw.githubusercontent.com/TamizhSK/GIST/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/TamizhSK/YEET/main/install.ps1 | iex
 
 .EXAMPLE
   # Pinning a version needs the script on disk — `iex` cannot take arguments.
-  irm https://raw.githubusercontent.com/TamizhSK/GIST/main/install.ps1 -OutFile i.ps1
+  irm https://raw.githubusercontent.com/TamizhSK/YEET/main/install.ps1 -OutFile i.ps1
   .\i.ps1 -Version v0.2
 
 .NOTES
@@ -45,7 +45,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$Repo = if ($env:YEET_REPO) { $env:YEET_REPO } else { 'https://github.com/TamizhSK/GIST' }
+$Repo = if ($env:YEET_REPO) { $env:YEET_REPO } else { 'https://github.com/TamizhSK/YEET' }
 # %LOCALAPPDATA%, not Program Files: no elevation, and it is per-user, which is
 # what an isolated application install should be.
 $HomeDir = if ($env:YEET_HOME) { $env:YEET_HOME } else { Join-Path $env:LOCALAPPDATA 'yeet' }

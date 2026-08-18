@@ -1,7 +1,7 @@
 #!/bin/sh
 # yeet installer — Linux, macOS, and WSL.
 #
-#   curl -fsSL https://raw.githubusercontent.com/TamizhSK/GIST/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/TamizhSK/YEET/main/install.sh | sh
 #
 # What it does: finds a Python 3.10+, builds a virtualenv that belongs to yeet
 # alone, installs yeet and its dependencies into it, and drops a launcher on
@@ -38,7 +38,7 @@ if [ -z "${HOME:-}" ]; then
     exit 1
 fi
 
-REPO="${YEET_REPO:-https://github.com/TamizhSK/GIST}"
+REPO="${YEET_REPO:-https://github.com/TamizhSK/YEET}"
 REF="${YEET_REF:-main}"
 HOME_DIR="${YEET_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/yeet}"
 BIN_DIR="${YEET_BIN_DIR:-$HOME/.local/bin}"
@@ -70,7 +70,7 @@ usage() {
     cat <<'USAGE'
 yeet installer
 
-  curl -fsSL https://raw.githubusercontent.com/TamizhSK/GIST/main/install.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/TamizhSK/YEET/main/install.sh | sh
 
 Run from a clone, it installs that clone. No flag needed:
 
