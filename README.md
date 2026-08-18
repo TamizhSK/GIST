@@ -310,7 +310,7 @@ compatibility corpus — all validating clean.
 ## Development
 
 ```bash
-git clone https://github.com/TamizhSK/YEET && cd GIST
+git clone https://github.com/TamizhSK/YEET && cd YEET
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pre-commit install

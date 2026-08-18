@@ -11,7 +11,7 @@ Everything below was verified by running it, not copied from a design doc.
 ## 1. Getting it running (10 minutes)
 
 ```bash
-git clone <repo> && cd GIST/yeet
+git clone <repo> && cd YEET
 
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1

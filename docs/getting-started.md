@@ -12,7 +12,7 @@ this one says *where each thing lives* and *what to do in which order*.
 > record.
 
 ```bash
-git clone <this repo> && cd GIST
+git clone <this repo> && cd YEET
 python -m venv .venv && source .venv/bin/activate   # PS: .venv\Scripts\Activate.ps1
 pip install -e ".[dev]" && pre-commit install
 make check                                          # must be green before you start
