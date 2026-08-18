@@ -7,7 +7,9 @@ environment rather than against the developer's own working box.
 
 from __future__ import annotations
 
+import os
 import sys
+from pathlib import Path
 
 import pytest
 import typer
@@ -17,6 +19,12 @@ from yeet.cli import cmd_doctor
 from yeet.cli.app import app
 
 runner = CliRunner()
+
+# Revoking write on a directory is a POSIX-only trick, and it does not work on
+# a POSIX box either when the tests run as root — the mode bits are advisory to
+# uid 0. Both cases produce a writable directory, a correct `ok` from the check,
+# and a red assertion about the one arrangement that could not be built.
+_CAN_REVOKE_WRITE = sys.platform != "win32" and os.geteuid() != 0
 
 
 @pytest.fixture
@@ -77,19 +85,15 @@ def test_an_old_python_fails_rather_than_warns(monkeypatch):
 
 
 @pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="chmod cannot make a directory unwritable on Windows",
+    not _CAN_REVOKE_WRITE,
+    reason="chmod cannot revoke write from a directory on Windows, or for root",
 )
-def test_an_unwritable_config_dir_is_reported_with_its_path(tmp_path, monkeypatch):
+def test_an_unwritable_config_dir_is_reported_with_its_path(tmp_path):
     """It fails much later otherwise, mid-run, as a permission error about a
     path the user never chose.
 
-    POSIX-only, and the skip is about the SETUP rather than the check. Python's
-    `os.chmod` on Windows moves one bit — FILE_ATTRIBUTE_READONLY — and that
-    bit does not stop a file being created inside a directory. So `0o500` left
-    the directory writable, `_writable` probed it, correctly said so, and the
-    assertion below failed on the one platform where the arrangement it
-    describes cannot be built.
+    The skip is about the SETUP, not the check — see `_CAN_REVOKE_WRITE`. The
+    contract itself is asserted on every platform by the test below.
     """
     blocked = tmp_path / "ro" / "yeet"
     blocked.parent.mkdir()
@@ -102,6 +106,27 @@ def test_an_unwritable_config_dir_is_reported_with_its_path(tmp_path, monkeypatc
 
     assert check.status == cmd_doctor.FAIL
     assert str(blocked) in check.detail
+
+
+def test_a_refused_config_dir_is_reported_with_its_path_and_a_fix(tmp_path, monkeypatch):
+    """The failure branch of `_writable` is the half users actually hit, and on
+    Windows the test above cannot reach it. Refuse the mkdir directly, so the
+    branch is covered on every platform in the matrix rather than on two of the
+    three — which is how the Windows column went red on a check that was right.
+    """
+    blocked = tmp_path / "ro" / "yeet"
+
+    def refused(*_args, **_kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "mkdir", refused)
+
+    check = cmd_doctor._writable("config dir", blocked)
+
+    assert check.status == cmd_doctor.FAIL
+    assert str(blocked) in check.detail
+    assert "Permission denied" in check.detail
+    assert check.fix
 
 
 def test_a_check_is_always_one_line():
