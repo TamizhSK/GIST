@@ -159,6 +159,53 @@ jobs:
           .\install.ps1 -Version main
           & "$env:LOCALAPPDATA\yeet\bin\yeet.cmd" --version
 
+      # The PATH edit itself, which every step above deliberately turned off.
+      # A canary is planted first: an entry spelled with `%USERPROFILE%` makes
+      # the user PATH REG_EXPAND_SZ, and `[Environment]::SetEnvironmentVariable`
+      # rewrites the whole value as REG_SZ — which turns that entry into a
+      # literal directory name that does not exist. An installer appending one
+      # entry must not damage the ones it found.
+      - name: it edits the user PATH without corrupting what was there
+        shell: powershell
+        run: |
+          $canary = '%USERPROFILE%\yeet-canary'
+          $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+          $before = [string]$key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+          $key.SetValue('Path', "$before;$canary", 'ExpandString')
+          $key.Close()
+
+          .\install.ps1 -Local
+
+          $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
+          $after = [string]$key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+          $kind = $key.GetValueKind('Path')
+          $key.Close()
+          Write-Host "kind=$kind"
+          Write-Host "path=$after"
+
+          if ($after -notlike "*$canary*") {
+            throw "the %USERPROFILE% entry was expanded or dropped: $after"
+          }
+          if ($kind -ne 'ExpandString') { throw "value kind became $kind" }
+          if ($after -notlike "*$env:LOCALAPPDATA\yeet\bin*") {
+            throw "the launcher directory is not on the user PATH"
+          }
+
+      - name: and cmd.exe, PowerShell and Git Bash all resolve a bare `yeet`
+        shell: powershell
+        run: |
+          # The registry value, not $env:PATH: a step inherits the runner's
+          # environment, which was fixed before the install ran. This is what a
+          # NEW terminal would be handed.
+          $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
+          $env:PATH = "$userPath;$env:PATH"
+
+          yeet --version                  # PowerShell, through yeet.cmd
+          cmd /c "yeet --version"         # cmd.exe, through PATHEXT
+          # Git Bash does not use PATHEXT: it needs the extensionless shim, and
+          # a directory holding only `yeet.cmd` gives "command not found" here.
+          bash -c "yeet --version"
+
   installer-gitbash:
     # Git Bash is what a Windows user reaches for when they see a `curl | sh`
     # one-liner, and install.sh assumed `venv/bin/python`. A Windows venv puts
@@ -174,6 +221,33 @@ jobs:
         run: |
           ./install.sh
           ~/.local/bin/yeet --version
+
+      # install.sh on Windows has TWO halves of PATH to get right, and the POSIX
+      # one is the half it used to do alone: a `#!/bin/sh` shim on the Git Bash
+      # PATH, invisible to cmd.exe and PowerShell, which resolve through PATHEXT
+      # and never look for an extensionless file.
+      - name: it also writes a .cmd shim and the Windows user PATH
+        shell: bash
+        run: |
+          ./install.sh
+          test -f ~/.local/bin/yeet.cmd || { echo "no .cmd shim for cmd/PowerShell"; exit 1; }
+          test -f ~/.local/bin/yeet || { echo "no POSIX shim for Git Bash"; exit 1; }
+          grep -Fq 'yeet installer' ~/.bashrc || { echo "no PATH line in .bashrc"; exit 1; }
+          # LF, not CRLF: `#!/bin/sh\r` is `/bin/sh^M: bad interpreter`.
+          if grep -qU $'\r' ~/.local/bin/yeet; then echo "CRLF in the POSIX shim"; exit 1; fi
+
+      - name: and cmd.exe finds it through the PATH the installer stored
+        shell: powershell
+        run: |
+          $bin = Join-Path $env:USERPROFILE '.local\bin'
+          $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
+          Write-Host "user PATH: $userPath"
+          if ($userPath -notlike "*$bin*") {
+            throw "install.sh under Git Bash did not put $bin on the Windows user PATH"
+          }
+          $env:PATH = "$userPath;$env:PATH"
+          cmd /c "yeet --version"
+          yeet --version
 
   installer-posix:
     # The three Linux variants a naive installer breaks on, plus macOS.
@@ -197,6 +271,37 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/src" -w /src ${{ matrix.image }} sh -c \
             "${{ matrix.setup }} && ./install.sh && ~/.local/bin/yeet --version"
+
+      # The PATH edit, on the platform where it is the difference between
+      # "installed" and "usable". EVERY shell that is on the machine gets the
+      # line, not only `$SHELL` — someone who installs from bash and then opens
+      # zsh (the macOS default, and the case this proves) used to get "command
+      # not found" from a tool the installer had just called ready.
+      - name: every shell on the box picks it up, and a re-run adds nothing
+        if: matrix.image == ''
+        run: |
+          set -eu
+          export HOME="$RUNNER_TEMP/pathhome"
+          rm -rf "$HOME" && mkdir -p "$HOME"
+          SHELL=/bin/bash ./install.sh --local >/dev/null
+
+          for rc in .bashrc .bash_profile .zshrc .profile; do
+              if [ -f "$HOME/$rc" ]; then
+                  echo "$rc: $(grep -c 'yeet installer' "$HOME/$rc" || true)"
+              fi
+          done
+          # zsh is present on both runners; .profile is written unconditionally.
+          grep -Fq 'yeet installer' "$HOME/.zshrc"
+          grep -Fq 'yeet installer' "$HOME/.profile"
+
+          # A fresh interactive zsh — the shell the installer was NOT run from —
+          # must resolve it.
+          ZDOTDIR="$HOME" zsh -i -c 'command -v yeet' >/dev/null
+          bash -l -c 'command -v yeet' >/dev/null
+
+          SHELL=/bin/bash ./install.sh --local >/dev/null   # idempotent
+          test "$(grep -c 'yeet installer' "$HOME/.zshrc")" = 1
+          test "$(grep -c 'yeet installer' "$HOME/.profile")" = 1
 
       - name: install on the host
         if: matrix.image == ''

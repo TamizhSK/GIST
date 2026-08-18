@@ -1,5 +1,5 @@
 #!/bin/sh
-# yeet installer — Linux, macOS, and WSL.
+# yeet installer — Linux, macOS, WSL, and Git Bash on Windows.
 #
 #   curl -fsSL https://raw.githubusercontent.com/TamizhSK/YEET/main/install.sh | sh
 #
@@ -25,7 +25,9 @@
 #   YEET_REF       branch, tag or commit        (default: main)
 #   YEET_HOME      where the venv lives         (default: ~/.local/share/yeet)
 #   YEET_BIN_DIR   where the launcher goes      (default: ~/.local/bin)
-#   YEET_NO_MODIFY_PATH=1   don't offer to edit your shell profile
+#   YEET_NO_MODIFY_PATH=1   don't edit your shell profiles or the Windows PATH
+#   YEET_SYSTEM_PATH=1      Git Bash only: also add to the MACHINE PATH, which
+#                           needs an elevated shell and affects every account
 
 set -eu
 
@@ -55,6 +57,18 @@ MAX_TESTED=13   # the newest minor the CI matrix actually runs
 # the POSIX profile is the right guess.
 SHELL_NAME="${SHELL:-/bin/sh}"
 SHELL_NAME="${SHELL_NAME##*/}"
+
+# Git Bash, MSYS2 and Cygwin run this script ON WINDOWS, and Windows has TWO
+# PATHs that matter: the POSIX one this shell exports for itself, and the user
+# environment variable that cmd.exe, PowerShell and every new Git Bash window
+# read at startup. Editing only the first is why `yeet` worked in the terminal
+# that ran the installer and nowhere else. What it changes further down: a
+# `yeet.cmd` shim next to the POSIX one, and a registry edit for the user PATH.
+case "$(uname -s 2>/dev/null || echo unknown)" in
+    MINGW*|MSYS*|CYGWIN*) WINDOWS=1 ;;
+    *)                    WINDOWS=0 ;;
+esac
+
 TOTAL_STEPS=4
 LOCAL_DIR=''
 AUTO_LOCAL=0        # did we find the clone ourselves, or were we told?
@@ -826,11 +840,146 @@ cat > "$BIN_DIR/yeet-uninstall" <<EOF
 set -eu
 printf 'Removing %s and %s\n' "$HOME_DIR" "$BIN_DIR/yeet"
 rm -rf "$HOME_DIR"
-rm -f "$BIN_DIR/yeet" "$BIN_DIR/yeet-uninstall"
-printf 'Done.\n'
+# The .cmd pair only exists on Windows; \`rm -f\` on absent files is silent, so
+# there is no need for the installer to record which platform this was.
+rm -f "$BIN_DIR/yeet" "$BIN_DIR/yeet-uninstall" \\
+      "$BIN_DIR/yeet.cmd" "$BIN_DIR/yeet-uninstall.cmd"
+printf 'Done. The PATH entry for %s is left alone — remove it by hand if you\\n' "$BIN_DIR"
+printf 'want it gone; the shell profile line is marked "added by the yeet installer".\\n'
 EOF
 chmod 755 "$BIN_DIR/yeet-uninstall"
 ok "$BIN_DIR/yeet"
+
+# ── the other half of PATH, on Windows ────────────────────────────────────────
+# The shim above is a `#!/bin/sh` script, which cmd.exe and PowerShell cannot
+# execute at all: they resolve a bare `yeet` through PATHEXT, and `yeet` with no
+# extension is not on it. So a Git Bash install produced a `yeet` that worked in
+# Git Bash and "is not recognized as an internal or external command" in the two
+# shells most Windows users are actually in.
+#
+# A `.cmd` alongside it fixes both, because the two lookups do not collide:
+# bash matches the exact name `yeet` and never appends `.cmd`, while cmd.exe and
+# PowerShell only ever find `yeet.cmd`. Same launcher, two spellings, one entry
+# on PATH.
+if [ "$WINDOWS" = 1 ]; then
+    if command -v cygpath >/dev/null 2>&1; then
+        WIN_VENV_YEET=$(cygpath -w "$VENV_YEET" 2>/dev/null || echo '')
+        WIN_HOME_DIR=$(cygpath -w "$HOME_DIR" 2>/dev/null || echo '')
+        WIN_BIN_DIR=$(cygpath -w "$BIN_DIR" 2>/dev/null || echo '')
+    else
+        # Every Git Bash, MSYS2 and Cygwin ships it, so this is close to
+        # impossible — and silently skipping half the install would be worse
+        # than saying so.
+        warn "no cygpath: yeet will work in this shell but not in cmd or PowerShell"
+    fi
+fi
+WIN_VENV_YEET="${WIN_VENV_YEET:-}"
+WIN_HOME_DIR="${WIN_HOME_DIR:-}"
+WIN_BIN_DIR="${WIN_BIN_DIR:-}"
+
+if [ -n "$WIN_VENV_YEET" ]; then
+    # CRLF, and `printf` rather than a heredoc to get it: cmd.exe tolerates a
+    # bare LF in a simple batch file but not reliably in every one, and a shim
+    # that works until somebody adds a line to it is a trap for later.
+    {
+        printf '@echo off\r\n'
+        printf 'rem Installed by the yeet installer. Delete this file and %s to remove.\r\n' "$WIN_HOME_DIR"
+        printf '"%s" %%*\r\n' "$WIN_VENV_YEET"
+    } > "$BIN_DIR/yeet.cmd"
+
+    # Self-deletion is the LAST line: cmd.exe reads a batch file from disk as it
+    # goes, so a script that removes itself in the middle stops there.
+    {
+        printf '@echo off\r\n'
+        printf 'echo Removing %s\r\n' "$WIN_HOME_DIR"
+        printf 'rmdir /s /q "%s"\r\n' "$WIN_HOME_DIR"
+        printf 'del /q "%s\\yeet" "%s\\yeet-uninstall" "%s\\yeet.cmd" 2>nul\r\n' \
+            "$WIN_BIN_DIR" "$WIN_BIN_DIR" "$WIN_BIN_DIR"
+        printf 'echo Done. Remove %s from your PATH if you no longer want it.\r\n' "$WIN_BIN_DIR"
+        printf 'del /q "%%~f0"\r\n'
+    } > "$BIN_DIR/yeet-uninstall.cmd"
+    ok "$BIN_DIR/yeet.cmd ${MUTE}(cmd, PowerShell)${N}"
+fi
+
+# The USER environment variable, through the registry, which is what makes the
+# install outlive this terminal on Windows. Three things it must get right and
+# one it must not do:
+#
+#   * `setx` is the obvious tool and the wrong one: it truncates a PATH longer
+#     than 1024 characters, and a corporate PATH is routinely longer. This goes
+#     through .NET, which does not.
+#   * The value's registry TYPE is preserved. A user PATH holding `%USERPROFILE%`
+#     is REG_EXPAND_SZ, and rewriting it as a plain string turns every variable
+#     in it into a literal — breaking entries this installer never touched.
+#   * WM_SETTINGCHANGE is broadcast, so Explorer and anything launched from it
+#     pick the value up without a sign-out.
+#
+# What it must not do: touch the MACHINE variable. That needs elevation, it is
+# shared with every other account on the box, and `curl | sh` is not a context
+# in which to ask for either. `YEET_SYSTEM_PATH=1` in an elevated shell is the
+# opt-in, and it adds to the machine PATH IN ADDITION rather than instead.
+windows_path_add() {
+    [ -n "$WIN_BIN_DIR" ] || return 1
+    command -v powershell.exe >/dev/null 2>&1 || return 1
+    _scope="$1"
+    cat > "$HOME_DIR/win-path.ps1" <<'PS1'
+param([string]$Dir, [string]$Scope = 'User')
+$ErrorActionPreference = 'Stop'
+if ($Scope -eq 'Machine') {
+    $root = [Microsoft.Win32.Registry]::LocalMachine
+    $sub  = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
+} else {
+    $root = [Microsoft.Win32.Registry]::CurrentUser
+    $sub  = 'Environment'
+}
+$key = $root.OpenSubKey($sub, $true)
+if ($null -eq $key) { Write-Error "cannot open $Scope environment for writing"; exit 1 }
+try {
+    # Unexpanded, so `%USERPROFILE%` stays `%USERPROFILE%` on the way back in.
+    $current = [string]$key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+    foreach ($entry in ($current -split ';')) {
+        if ($entry -and ($entry.TrimEnd('\') -ieq $Dir.TrimEnd('\'))) { exit 0 }
+    }
+    $kind = 'ExpandString'
+    try { if ($key.GetValueKind('Path') -eq 'String') { $kind = 'String' } } catch { }
+    $updated = if ($current) { "$current;$Dir" } else { $Dir }
+    $key.SetValue('Path', $updated, $kind)
+} finally {
+    $key.Close()
+}
+# Best effort, and deliberately last: the value is already written, so a machine
+# that will not compile this type still got the install it asked for.
+try {
+    Add-Type -Namespace Yeet -Name Env -MemberDefinition @'
+[DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam,
+    string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+'@ -ErrorAction Stop
+    $out = [UIntPtr]::Zero
+    [void][Yeet.Env]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 1000, [ref]$out)
+} catch { }
+exit 0
+PS1
+    _ps1_win=$(cygpath -w "$HOME_DIR/win-path.ps1" 2>/dev/null || echo '')
+    [ -n "$_ps1_win" ] || return 1
+    powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+        -File "$_ps1_win" -Dir "$WIN_BIN_DIR" -Scope "$_scope" >/dev/null 2>&1
+}
+
+if [ -n "$WIN_BIN_DIR" ] && [ -z "${YEET_NO_MODIFY_PATH:-}" ]; then
+    if windows_path_add User; then
+        ok "added to your Windows user PATH ${MUTE}(cmd, PowerShell, new Git Bash windows)${N}"
+    else
+        warn "could not edit the Windows user PATH — add $WIN_BIN_DIR to it by hand"
+    fi
+    if [ -n "${YEET_SYSTEM_PATH:-}" ]; then
+        if windows_path_add Machine; then
+            ok "added to the system PATH ${MUTE}(every account on this machine)${N}"
+        else
+            warn "could not edit the system PATH — that needs an elevated shell"
+        fi
+    fi
+fi
 
 # A process cannot change the environment of the shell that started it — that
 # is an OS boundary, not an oversight, and it is why every curl|sh installer
@@ -879,21 +1028,82 @@ case ":$PATH:" in
 esac
 PATH_OK=$USABLE_NOW
 
+# EVERY shell on this machine, not only the one that ran the installer. `$SHELL`
+# is where the user was standing at the time, and it answers a question nobody
+# asked: someone who installs from Git Bash then opens zsh, or from bash inside
+# an IDE terminal then uses zsh in Terminal.app, gets "command not found" from a
+# tool the installer said was ready. macOS makes it the common case rather than
+# the exotic one — the login shell is zsh and half the scripts on the machine
+# run under bash.
+#
+# So the line goes into the profile of every shell that is actually HERE
+# (`command -v`), plus any rc file that already exists, plus `~/.profile` as the
+# POSIX catch-all. Each write is guarded by a grep for $BIN_DIR, so re-running
+# the installer adds nothing and a hand-written line already there is honoured.
+#
+# `printf` into a file we did not write is the one genuinely invasive thing this
+# installer does, which is why YEET_NO_MODIFY_PATH exists and why the appended
+# block carries a comment naming who added it.
+profile_add() {
+    _profile="$1"
+    _line="$2"
+    if [ -f "$_profile" ] && grep -Fq "$BIN_DIR" "$_profile" 2>/dev/null; then
+        # Already there — this shell has simply not re-read it. That is a
+        # different state from "not installed" and it must not be reported as
+        # one.
+        PATH_OK=1
+        return 0
+    fi
+    mkdir -p "$(dirname "$_profile")" 2>/dev/null || return 1
+    printf '\n# added by the yeet installer\n%s\n' "$_line" >> "$_profile" 2>/dev/null || return 1
+    PATH_OK=1
+    PROFILES_EDITED="${PROFILES_EDITED:+$PROFILES_EDITED, }$_profile"
+    return 0
+}
+
+PROFILES_EDITED=''
 if [ "$PATH_OK" = 0 ] && [ -z "${YEET_NO_MODIFY_PATH:-}" ]; then
-    case "$SHELL_NAME" in
-        zsh)  PROFILE="$HOME/.zshrc" ;;
-        bash) if [ -f "$HOME/.bash_profile" ]; then PROFILE="$HOME/.bash_profile"; else PROFILE="$HOME/.bashrc"; fi ;;
-        fish) PROFILE="$HOME/.config/fish/config.fish" ;;
-        *)    PROFILE="$HOME/.profile" ;;
-    esac
-    LINE="export PATH=\"$BIN_DIR:\$PATH\""
-    [ "$SHELL_NAME" = fish ] && LINE="fish_add_path $BIN_DIR"
-    if [ -f "$PROFILE" ] && grep -Fq "$BIN_DIR" "$PROFILE" 2>/dev/null; then
-        PATH_OK=1  # already there; this shell just has not re-read it
-    else
-        mkdir -p "$(dirname "$PROFILE")"
-        printf '\n# added by the yeet installer\n%s\n' "$LINE" >> "$PROFILE"
-        ok "added to PATH in ${MUTE}$PROFILE${N}"
+    POSIX_LINE="export PATH=\"$BIN_DIR:\$PATH\""
+
+    # bash reads .bash_profile for a login shell and .bashrc otherwise, and on
+    # macOS every new Terminal window is a login shell. Prefer the file that
+    # exists; write .bashrc when neither does, because that is the one Linux
+    # distributions source from their own .profile.
+    if command -v bash >/dev/null 2>&1 || [ -f "$HOME/.bashrc" ] || [ -f "$HOME/.bash_profile" ]; then
+        if [ -f "$HOME/.bash_profile" ]; then
+            profile_add "$HOME/.bash_profile" "$POSIX_LINE"
+        else
+            profile_add "$HOME/.bashrc" "$POSIX_LINE"
+        fi
+    fi
+
+    # `$ZDOTDIR` is where zsh really reads `.zshrc` from, so it is honoured —
+    # but only when it points INSIDE $HOME. Everything this installer writes
+    # lives under $HOME by contract, and a ZDOTDIR left over from an outer shell
+    # while HOME points somewhere else is a mismatched environment, not an
+    # instruction: honouring it unconditionally wrote a PATH line for a sandbox
+    # install into the real user's ~/.zshrc, which is precisely the kind of
+    # damage an installer is not allowed to do.
+    if command -v zsh >/dev/null 2>&1 || [ -f "$HOME/.zshrc" ]; then
+        ZSH_DIR="$HOME"
+        case "${ZDOTDIR:-}" in
+            "$HOME"|"$HOME"/*) ZSH_DIR="$ZDOTDIR" ;;
+        esac
+        profile_add "$ZSH_DIR/.zshrc" "$POSIX_LINE"
+    fi
+
+    # fish is not POSIX and cannot read the line above at all.
+    if command -v fish >/dev/null 2>&1 || [ -f "$HOME/.config/fish/config.fish" ]; then
+        profile_add "$HOME/.config/fish/config.fish" "fish_add_path $BIN_DIR"
+    fi
+
+    # The catch-all, and the only one written unconditionally: dash, ksh, a
+    # display manager's session and `sh -l` all read it, and none of them have
+    # an rc file of their own to find.
+    profile_add "$HOME/.profile" "$POSIX_LINE"
+
+    if [ -n "$PROFILES_EDITED" ]; then
+        ok "added to PATH in ${MUTE}$PROFILES_EDITED${N}"
     fi
 fi
 
@@ -983,6 +1193,12 @@ if [ "$USABLE_NOW" = 0 ]; then
     printf '  %s%s%s to use it in %sthis%s terminal:  %s%s%s\n' \
         "$Y" "$ARROW" "$N" "$B" "$N" "$B" "$ACTIVATE" "$N"
     printf '     %severy new terminal picks it up on its own%s\n' "$MUTE" "$N"
+fi
+if [ -n "$WIN_BIN_DIR" ]; then
+    # Said out loud because it is the half of the install a Windows user cannot
+    # see from Git Bash: the same `yeet` is now on the PATH cmd.exe and
+    # PowerShell read, and neither of them inherits it from this window.
+    printf '     %scmd and PowerShell: open a new window, then `yeet --version`%s\n' "$MUTE" "$N"
 fi
 say ""
 printf '  %sremove it again with  yeet-uninstall%s\n' "$MUTE" "$N"

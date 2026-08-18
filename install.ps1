@@ -23,6 +23,12 @@
   Install from the clone this script sits in — already the default when it sits
   in one, so this only says out loud what would have happened anyway.
 
+.PARAMETER System
+  Also add the launcher to the MACHINE PATH, so every account on this box can
+  run `yeet`. Needs an elevated prompt, and is additive — the user PATH is set
+  either way. `$env:YEET_SYSTEM_PATH=1` does the same, which is what `irm | iex`
+  needs, since that form cannot take arguments.
+
 .PARAMETER Ascii
   Draw the wordmark and the bar with `#` instead of block characters. Whether a
   console can RENDER U+2588 depends on its font, and a font is not something a
@@ -49,6 +55,7 @@
 param(
     [string]$Version = $(if ($env:YEET_REF) { $env:YEET_REF } else { 'main' }),
     [switch]$Local,
+    [switch]$System,
     [switch]$Ascii
 )
 
@@ -62,7 +69,9 @@ $BinDir = if ($env:YEET_BIN_DIR) { $env:YEET_BIN_DIR } else { Join-Path $HomeDir
 $MinMinor = 10
 $MaxTested = 13
 $TotalSteps = 4
-$PathMarker = '# added by the yeet installer'
+# `-System` OR the environment variable, because `irm | iex` cannot pass a
+# switch. Read once, here, so the PATH step has one thing to test.
+$WantSystemPath = ($System -or $env:YEET_SYSTEM_PATH)
 
 # --- presentation ------------------------------------------------------------
 # Same two independent questions install.sh asks. `$Host.UI.RawUI` is absent
@@ -418,15 +427,120 @@ function Invoke-Native {
       A scriptblock rather than an exe plus args, so each call site keeps its
       own redirection (`*> $null`, `2>$null`, `*> $log`) and its own splatting.
       $LASTEXITCODE is global and survives the call.
+
+      WHY THE SCOPE QUALIFIERS, and why this function did not work without them:
+      a scriptblock is bound to the scope it was WRITTEN in, not to the one it
+      is invoked from. `& $Body` runs the caller's scriptblock in a child of the
+      CALLER'S scope, so a plain `$ErrorActionPreference = 'Continue'` here
+      created a local variable that the scriptblock could never see — it kept
+      resolving the name up its own chain to the script-scope 'Stop' at the top
+      of this file. The preference has to be changed where the lookup will
+      actually land, which is script scope (and global, for the `irm | iex`
+      form, where the script's top level IS the caller's global scope).
+
+      That is the whole reason pip's "Running command git clone ..." on stderr
+      still killed the install at step 3 of 4 after this function existed.
     #>
     param([scriptblock]$Body)
 
-    $previous = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
+    $prevScript = $script:ErrorActionPreference
+    $prevGlobal = $global:ErrorActionPreference
+    $script:ErrorActionPreference = 'Continue'
+    $global:ErrorActionPreference = 'Continue'
     try {
         & $Body
     } finally {
-        $ErrorActionPreference = $previous
+        $script:ErrorActionPreference = $prevScript
+        $global:ErrorActionPreference = $prevGlobal
+    }
+}
+
+function Test-Elevated {
+    try {
+        $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object Security.Principal.WindowsPrincipal $id
+        return $principal.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
+    } catch {
+        return $false
+    }
+}
+
+function Publish-EnvironmentChange {
+    <#
+      Broadcast WM_SETTINGCHANGE so Explorer — and everything launched from it
+      afterwards — rereads the environment without a sign-out.
+
+      Best effort by design, and called AFTER the value is already written: a
+      locked-down machine where `Add-Type` cannot compile still got the PATH
+      entry it asked for, and the only cost is that the user opens a new
+      terminal rather than a new tab. `SendMessageTimeout`, not `SendMessage`:
+      one hung top-level window must not hang an installer.
+    #>
+    try {
+        if (-not ('Yeet.NativeEnv' -as [type])) {
+            Add-Type -Namespace Yeet -Name NativeEnv -MemberDefinition @'
+[DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam,
+    string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+'@ -ErrorAction Stop
+        }
+        $unused = [UIntPtr]::Zero
+        # HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_ABORTIFHUNG, one second.
+        [void][Yeet.NativeEnv]::SendMessageTimeout(
+            [IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 1000, [ref]$unused)
+    } catch { }
+}
+
+function Add-PathEntry {
+    <#
+      Add one directory to the persistent PATH. Returns 'added', 'present' or
+      'denied' — never throws, because a PATH edit that fails must not lose the
+      install that already succeeded.
+
+      THROUGH THE REGISTRY, not `[Environment]::SetEnvironmentVariable`, and the
+      difference is not cosmetic: that API writes REG_SZ. A user PATH that held
+      `%USERPROFILE%\bin` is REG_EXPAND_SZ, and rewriting it as a plain string
+      turns every variable in it into a literal — so an installer that only
+      meant to append one entry silently breaks entries it never touched. The
+      value kind is read and preserved here.
+
+      `setx` has the same problem plus a worse one: it truncates any PATH longer
+      than 1024 characters, and a corporate PATH routinely is.
+
+      The value is read UNEXPANDED for the same reason.
+    #>
+    param([string]$Dir, [string]$Scope = 'User')
+
+    if ($Scope -eq 'Machine') {
+        $root = [Microsoft.Win32.Registry]::LocalMachine
+        $sub = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
+    } else {
+        $root = [Microsoft.Win32.Registry]::CurrentUser
+        $sub = 'Environment'
+    }
+
+    $key = $null
+    try {
+        $key = $root.OpenSubKey($sub, $true)
+        if ($null -eq $key) { return 'denied' }
+        $current = [string]$key.GetValue(
+            'Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        foreach ($entry in ($current -split ';')) {
+            if ($entry -and ($entry.TrimEnd('\') -ieq $Dir.TrimEnd('\'))) { return 'present' }
+        }
+        $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+        try {
+            if ($key.GetValueKind('Path') -eq [Microsoft.Win32.RegistryValueKind]::String) {
+                $kind = [Microsoft.Win32.RegistryValueKind]::String
+            }
+        } catch { }
+        $updated = if ($current) { "$current;$Dir" } else { $Dir }
+        $key.SetValue('Path', $updated, $kind)
+        return 'added'
+    } catch {
+        return 'denied'
+    } finally {
+        if ($null -ne $key) { $key.Close() }
     }
 }
 
@@ -715,9 +829,16 @@ if ($Backend -eq 'uv') {
         Stop-Install 'uv could not create a virtualenv. Re-run with $env:YEET_NO_UV=1 to use python -m venv.'
     }
 } else {
+    # Through `Invoke-Quiet` like every other long native call, so its output
+    # lands in the log instead of on the console. `python -m venv` under a Store
+    # interpreter prints "Actual environment location may have moved due to
+    # redirects, links or junctions" to STDERR — a warning, not a failure, and
+    # one that printed as a red NativeCommandError block right in the middle of
+    # a progress bar. The Test-Path below is what actually judges the result.
     $venvArgs = $PythonPrefix + @('-m', 'venv', $VenvDir)
-    Invoke-Native { & $PythonExe @venvArgs }
-    if ($LASTEXITCODE -ne 0) { Stop-Install "could not create a virtualenv in $VenvDir" }
+    if (-not (Invoke-Quiet 'creating the virtualenv' $PythonExe $venvArgs 40)) {
+        Stop-Install "could not create a virtualenv in $VenvDir"
+    }
 
     # CHECK BEFORE USING IT. A Microsoft Store Python runs in an app container
     # that redirects writes under %LOCALAPPDATA% into
@@ -773,9 +894,10 @@ Write-Ok "$banner"
 Write-Step 'Putting yeet on your PATH'
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
-# A .cmd shim rather than a copy: cmd.exe, PowerShell and Git Bash all execute
-# it, and it stays correct if the venv is rebuilt underneath. Every path is
-# quoted — `C:\Users\Tamizh Selvan\` is the standard way this breaks.
+# A .cmd shim rather than a copy: cmd.exe and PowerShell both resolve a bare
+# `yeet` through PATHEXT and find it, and it stays correct if the venv is
+# rebuilt underneath. Every path is quoted — `C:\Users\Tamizh Selvan\` is the
+# standard way this breaks.
 $shim = @"
 @echo off
 rem Installed by the yeet installer. Delete this file and $HomeDir to remove.
@@ -783,38 +905,95 @@ rem Installed by the yeet installer. Delete this file and $HomeDir to remove.
 "@
 Set-Content -Path (Join-Path $BinDir 'yeet.cmd') -Value $shim -Encoding ASCII
 
+# Self-deletion is the LAST line: cmd.exe reads a batch file from disk as it
+# goes, so a script that removes itself in the middle stops there.
 $uninstall = @"
 @echo off
 echo Removing $HomeDir
 rmdir /s /q "$HomeDir"
-echo Done. Remove $BinDir from PATH if you added it.
+del /q "$BinDir\yeet" 2>nul
+echo Done. Remove $BinDir from PATH if you no longer want it.
+del /q "%~f0"
 "@
 Set-Content -Path (Join-Path $BinDir 'yeet-uninstall.cmd') -Value $uninstall -Encoding ASCII
 Write-Ok (Join-Path $BinDir 'yeet.cmd')
 
-# The USER PATH, never the machine one: the machine one needs elevation and is
-# not ours to edit. Read from the registry rather than from $env:PATH, which is
-# the merged value and would write the machine's entries into the user's.
-$userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
-if ($null -eq $userPath) { $userPath = '' }
-$entries = $userPath -split ';' | Where-Object { $_ -ne '' }
+# AND AN EXTENSIONLESS SHELL SCRIPT NEXT TO IT, for Git Bash — the shell a large
+# share of Windows developers actually type `yeet` into. bash does not use
+# PATHEXT: it looks for the exact name `yeet` (appending only `.exe`), so a
+# directory holding nothing but `yeet.cmd` gives "yeet: command not found" from
+# the one shell whose PATH we just fixed.
+#
+# The two spellings cannot collide, which is what makes this safe: cmd.exe and
+# PowerShell only ever find `yeet.cmd`, bash only ever finds `yeet`.
+#
+# Forward slashes in the interpreter path: this is read by a POSIX shell, where a
+# backslash is an escape character, and `C:/Users/.../yeet.exe` is a path MSYS
+# resolves happily. LF line endings for the same reason — `#!/bin/sh\r` is the
+# single most confusing way a shell script can fail.
+$posixTarget = $VenvYeet -replace '\\', '/'
+$posixShim = "#!/bin/sh`n" +
+    "# Installed by the yeet installer. Delete this file and $HomeDir to remove.`n" +
+    "exec `"$posixTarget`" `"`$@`"`n"
+# .NET writes the string exactly as given; Set-Content would translate the `n
+# into the platform's CRLF and put the \r back into the shebang.
+[System.IO.File]::WriteAllText(
+    (Join-Path $BinDir 'yeet'), $posixShim, (New-Object System.Text.UTF8Encoding $false))
+Write-Ok (Join-Path $BinDir 'yeet')
+
+# THE PERSISTENT PATH. The user variable by default — it needs no elevation, it
+# is what an isolated per-user install should touch, and cmd.exe, PowerShell and
+# every new Git Bash window all read it at startup, so one edit covers all three.
+#
+# The machine variable is opt-in (`-System`, or $env:YEET_SYSTEM_PATH=1) and
+# requires an elevated shell: it is shared with every other account on the box,
+# and `irm | iex` is not a context in which to take that decision for someone.
+# Asked for without elevation it says so rather than failing silently.
 $PathOk = $false
-foreach ($entry in $entries) {
-    if ($entry.TrimEnd('\') -ieq $BinDir.TrimEnd('\')) { $PathOk = $true; break }
+$NeedsNewShell = $false
+
+if ($env:YEET_NO_MODIFY_PATH) {
+    Write-Warn "YEET_NO_MODIFY_PATH is set - add $BinDir to your PATH by hand"
+} else {
+    $result = Add-PathEntry $BinDir 'User'
+    if ($result -eq 'added') {
+        Write-Ok 'added to your user PATH (cmd, PowerShell, Git Bash)'
+        $PathOk = $true
+        $NeedsNewShell = $true
+        Publish-EnvironmentChange
+    } elseif ($result -eq 'present') {
+        # Already persistent from an earlier install. This session may still not
+        # have it, which is a different question and is answered below.
+        $PathOk = $true
+    } else {
+        Write-Warn "could not write your user PATH - add $BinDir to it by hand"
+    }
+
+    if ($WantSystemPath) {
+        if (-not (Test-Elevated)) {
+            Write-Warn 'the system PATH needs an elevated prompt - user PATH only'
+        } else {
+            $machine = Add-PathEntry $BinDir 'Machine'
+            if ($machine -eq 'added') {
+                Write-Ok 'added to the system PATH (every account on this machine)'
+                Publish-EnvironmentChange
+            } elseif ($machine -ne 'present') {
+                Write-Warn 'could not write the system PATH'
+            }
+        }
+    }
 }
 
-if (-not $PathOk -and -not $env:YEET_NO_MODIFY_PATH) {
-    # Idempotent by construction: the check above is the marker. Running this
-    # twice appends nothing the second time.
-    $newPath = if ($userPath) { "$userPath;$BinDir" } else { $BinDir }
-    [Environment]::SetEnvironmentVariable('PATH', $newPath, 'User')
-    $env:PATH = "$env:PATH;$BinDir"
-    Write-Ok 'added to your user PATH'
-    $PathOk = $true
-    $NeedsNewShell = $true
-} else {
-    $NeedsNewShell = $false
+# The PATH of the shell we are standing in, which no registry edit reaches: a
+# process cannot change its parent's environment. `irm | iex` runs in the user's
+# own session, so this one assignment is what makes `yeet` work immediately in
+# the window they installed from — and it is prepended for the same reason the
+# POSIX installer prepends: this yeet, not one an older install left behind.
+$sessionHas = $false
+foreach ($entry in ($env:PATH -split ';')) {
+    if ($entry -and ($entry.TrimEnd('\') -ieq $BinDir.TrimEnd('\'))) { $sessionHas = $true; break }
 }
+if (-not $sessionHas) { $env:PATH = "$BinDir;$env:PATH" }
 
 # --- what the user has, and what they do next --------------------------------
 # Everything below writes whole lines and expects to own the cursor, so the bar
@@ -845,9 +1024,16 @@ Write-Host ''
 Write-Colour "  $dockerNote" $dockerColour
 
 if ($NeedsNewShell) {
+    # This window is already done — the assignment above did it. What is left to
+    # say is about the OTHER shells, because a registry edit does not reach a
+    # process that is already running.
     Write-Host ''
-    Write-Plain '  -> open a new terminal, or run:'
-    Write-Plain "     `$env:PATH = `"$BinDir;`$env:PATH`""
+    Write-Plain '  -> ready in this window. cmd, Git Bash and any terminal already'
+    Write-Plain '     open pick it up once reopened.'
+} elseif (-not $PathOk) {
+    Write-Host ''
+    Write-Plain '  -> ready in this window only. To make it permanent, add to PATH:'
+    Write-Plain "     $BinDir"
 }
 Write-Host ''
 Write-Plain '  remove it again with  yeet-uninstall'
