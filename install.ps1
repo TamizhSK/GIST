@@ -29,7 +29,7 @@
 .EXAMPLE
   # Pinning a version needs the script on disk — `iex` cannot take arguments.
   irm https://raw.githubusercontent.com/TamizhSK/GIST/main/install.ps1 -OutFile i.ps1
-  .\i.ps1 -Version v0.1
+  .\i.ps1 -Version v0.2
 
 .NOTES
   Under a Restricted execution policy `irm | iex` is refused. That is the
