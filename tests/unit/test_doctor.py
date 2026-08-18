@@ -7,6 +7,8 @@ environment rather than against the developer's own working box.
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 import typer
 from typer.testing import CliRunner
@@ -74,9 +76,21 @@ def test_an_old_python_fails_rather_than_warns(monkeypatch):
     assert check.fix
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="chmod cannot make a directory unwritable on Windows",
+)
 def test_an_unwritable_config_dir_is_reported_with_its_path(tmp_path, monkeypatch):
     """It fails much later otherwise, mid-run, as a permission error about a
-    path the user never chose."""
+    path the user never chose.
+
+    POSIX-only, and the skip is about the SETUP rather than the check. Python's
+    `os.chmod` on Windows moves one bit — FILE_ATTRIBUTE_READONLY — and that
+    bit does not stop a file being created inside a directory. So `0o500` left
+    the directory writable, `_writable` probed it, correctly said so, and the
+    assertion below failed on the one platform where the arrangement it
+    describes cannot be built.
+    """
     blocked = tmp_path / "ro" / "yeet"
     blocked.parent.mkdir()
     blocked.parent.chmod(0o500)
