@@ -15,7 +15,7 @@
 # Run from a clone, it installs THAT clone — `./install.sh` inside a checkout
 # you have been editing means the checkout, not `main` off the network.
 #
-# Options (after `--` when piped:  ... | sh -s -- --version v0.6):
+# Options (after `--` when piped:  ... | sh -s -- --version v0.7):
 #   --version <ref>   install a tag, branch or commit from GitHub instead
 #   --local           install from THIS clone (the default when there is one)
 #   --help

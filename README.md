@@ -188,7 +188,7 @@ and no way to accidentally install `main` over the branch you are editing:
 Pin a published version instead, from anywhere:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TamizhSK/YEET/main/install.sh | sh -s -- --version v0.6
+curl -fsSL https://raw.githubusercontent.com/TamizhSK/YEET/main/install.sh | sh -s -- --version v0.7
 ./install.sh --version main   # from inside a clone: fetch, don't use the clone
 ```
 
