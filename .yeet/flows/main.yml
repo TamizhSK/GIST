@@ -1,0 +1,22 @@
+vibe: "GIST"
+when:
+  push:
+    branches:
+      - main
+  manual:
+
+the_grind:
+
+  build:
+    name: "Build & test"
+
+    cooked_on: "ubuntu-latest"
+
+    moves:
+      - yoink: "./.yeet/actions/checkout"
+
+      - run: "echo 'edit me — this is your build step'"
+
+      - run: "echo 'and this is your test step'"
+
+
