@@ -120,13 +120,20 @@ If that is refused, your execution policy is doing its job. For one command:
 powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/TamizhSK/GIST/main/install.ps1 | iex"
 ```
 
-New terminals have `yeet` on PATH from then on. To use it in the terminal you
-ran the installer in, source the env file it leaves behind — no process can put
-something on the PATH of the shell that started it, so this is the one manual
-step, and it is one line:
+Git Bash on Windows works too, with the same `curl | sh` line as Linux — it
+gets a Windows virtualenv and a launcher Git Bash can run.
+
+**Using it in the terminal you installed from.** New terminals pick `yeet` up
+on their own; the one you are standing in does not, because no process can put
+anything on the PATH of the shell that started it. That is the one manual step,
+and it is one line:
 
 ```bash
 . "$HOME/.local/share/yeet/env"     # fish: source ~/.local/share/yeet/env.fish
+```
+
+```powershell
+$env:PATH = "$env:LOCALAPPDATA\yeet\bin;$env:PATH"
 ```
 
 Then, before anything else:

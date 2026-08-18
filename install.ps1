@@ -68,13 +68,43 @@ try {
 }
 
 # The console codepage decides whether the block art can be WRITTEN at all.
-# 65001 is UTF-8; anything else gets the plain wordmark rather than a screen of
-# question marks, which is the worse first impression of the two.
+# 65001 is UTF-8; anything else turns the wordmark into a screen of question
+# marks, which is the worse first impression of the two.
+#
+# So ASK FOR IT rather than giving up. A stock Windows PowerShell 5.1 console
+# starts on codepage 437 or 1252 and never on 65001, which meant the machines
+# this file exists for were exactly the ones that got the ASCII fallback. In
+# .NET, assigning Console::OutputEncoding calls SetConsoleOutputCP, so this
+# changes the console itself and not merely how this process encodes.
+#
+# Verified afterwards rather than assumed — if the assignment is refused, or
+# accepted and does not take, `$Unicode` stays false and the `#` wordmark is
+# still there to fall back to. Restored on the way out by `Restore-Console`,
+# because `irm | iex` runs in the user's own session and leaving their console
+# reconfigured is not this script's business.
+#
+# Only when there is a console to reconfigure. Redirected — CI, a transcript —
+# the wordmark is not drawn at all, so there is nothing to gain by changing the
+# encoding of a stream somebody else owns.
+$script:PrevEncoding = $null
 $script:Unicode = $false
-try {
-    $script:Unicode = ([Console]::OutputEncoding.CodePage -eq 65001)
-} catch {
-    $script:Unicode = $false
+if ($script:Tty) {
+    try {
+        if ([Console]::OutputEncoding.CodePage -ne 65001) {
+            $script:PrevEncoding = [Console]::OutputEncoding
+            [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+        }
+        $script:Unicode = ([Console]::OutputEncoding.CodePage -eq 65001)
+    } catch {
+        $script:Unicode = $false
+    }
+}
+
+function Restore-Console {
+    if ($null -ne $script:PrevEncoding) {
+        try { [Console]::OutputEncoding = $script:PrevEncoding } catch { }
+        $script:PrevEncoding = $null
+    }
 }
 
 function Write-Plain([string]$Text) { Write-Host $Text }
@@ -83,17 +113,96 @@ function Write-Colour([string]$Text, [string]$Colour) {
     if ($script:Tty) { Write-Host $Text -ForegroundColor $Colour } else { Write-Host $Text }
 }
 
+# --- the progress bar --------------------------------------------------------
+# One bar, full width, and on a console it is the ONLY thing under the
+# wordmark. install.sh does the same and for the same reason: a four-step
+# install narrating its own bookkeeping tells you what it is doing instead of
+# how much is left, and those lines are gone from your attention a second
+# later. Redirected — a CI log, a transcript pasted into an issue — every line
+# prints instead, because that is where the record has to be complete.
+$script:Pct = 0
+$script:BarOn = $false
+
+function Get-ConsoleWidth {
+    # 80 when it cannot be known: every console is at least that wide, and a
+    # bar computed from a zero width prints nothing at all.
+    try {
+        $w = $Host.UI.RawUI.WindowSize.Width
+        if ($w -and $w -gt 20) { return $w }
+    } catch { }
+    return 80
+}
+
+function Write-Bar {
+    if (-not $script:Tty) { return }
+    # Two leading spaces, the brackets, a space, and `100%` — the fixed chrome
+    # the bar itself has to leave room for, plus one column of slack so a full
+    # bar never touches the last cell and wraps the line.
+    $width = (Get-ConsoleWidth) - 11
+    if ($width -lt 10) { $width = 10 }
+    $fill = [int]($script:Pct * $width / 100)
+    if ($fill -gt $width) { $fill = $width }
+    if ($script:Unicode) { $full = [char]0x2588; $empty = [char]0x2591 } else { $full = '#'; $empty = '-' }
+    $bar = (New-Object string $full, $fill) + (New-Object string $empty, ($width - $fill))
+    $pct = ("{0,3}" -f $script:Pct)
+    Write-Host ("`r  [$bar] $pct%") -NoNewline
+    $script:BarOn = $true
+}
+
+function Clear-Bar {
+    if (-not $script:BarOn) { return }
+    # No ANSI: 5.1 consoles do not all have VT processing on. Overwrite the
+    # line with spaces and come back to the start of it.
+    Write-Host ("`r" + (' ' * ((Get-ConsoleWidth) - 1)) + "`r") -NoNewline
+    $script:BarOn = $false
+}
+
+function Complete-Bar {
+    if (-not $script:Tty) { return }
+    $script:Pct = 100
+    Write-Bar
+    Write-Host ''
+    $script:BarOn = $false
+}
+
+function Set-Progress([int]$Pct) {
+    if ($Pct -gt $script:Pct) { $script:Pct = $Pct }
+    Write-Bar
+}
+
 $script:StepNo = 0
 function Write-Step([string]$Text) {
     $script:StepNo++
-    Write-Colour "[$($script:StepNo)/$TotalSteps] $Text" 'Yellow'
+    # A floor, never an assignment: a later step must not run the bar
+    # backwards, which reads as the installer losing its place.
+    $floor = [int](($script:StepNo - 1) * 100 / $TotalSteps)
+    if ($floor -gt $script:Pct) { $script:Pct = $floor }
+    if (-not $script:Tty) {
+        Write-Colour "[$($script:StepNo)/$TotalSteps] $Text" 'Yellow'
+        return
+    }
+    Write-Bar
 }
 
-function Write-Ok([string]$Text) { Write-Colour "      ok  $Text" 'Green' }
-function Write-Info([string]$Text) { Write-Plain "      $Text" }
-function Write-Warn([string]$Text) { Write-Colour "      !   $Text" 'Yellow' }
+function Write-Ok([string]$Text) {
+    if (-not $script:Tty) { Write-Colour "      ok  $Text" 'Green'; return }
+    Write-Bar
+}
+function Write-Info([string]$Text) {
+    if (-not $script:Tty) { Write-Plain "      $Text"; return }
+    Write-Bar
+}
+# Warnings print on a console TOO. One that scrolled past inside a progress bar
+# was never delivered.
+function Write-Warn([string]$Text) {
+    Clear-Bar
+    Write-Colour "      !   $Text" 'Yellow'
+    Write-Bar
+}
 
 function Stop-Install([string]$Text) {
+    Clear-Bar
+    Restore-Console
     Write-Host ''
     Write-Colour "  xx  $Text" 'Red'
     Write-Host ''
@@ -147,9 +256,15 @@ function Invoke-Quiet {
       output is forty lines nobody reads, right up until it fails and every one
       of them matters — so it goes to the log and is printed only then.
     #>
-    param([string]$Label, [string]$Exe, [string[]]$Arguments)
+    param([string]$Label, [string]$Exe, [string[]]$Arguments, [int]$Target = 0)
 
     Write-Info "$Label..."
+    # Half the remaining distance before the work, the rest after it. The call
+    # below is synchronous — a native command cannot be polled without giving
+    # up the splatted call operator that keeps `C:\Users\Tamizh Selvan\`
+    # quoted correctly — so the bar cannot creep during it. Two movements per
+    # long step is what can honestly be shown.
+    if ($Target -gt 0) { Set-Progress ([int](($script:Pct + $Target) / 2)) }
     $log = Join-Path $HomeDir 'install.log'
 
     # A NATIVE COMMAND WRITING TO STDERR IS NOT AN ERROR, and this is the line
@@ -177,6 +292,7 @@ function Invoke-Quiet {
     } finally {
         $ErrorActionPreference = $previous
     }
+    if ($Target -gt 0 -and $LASTEXITCODE -eq 0) { Set-Progress $Target }
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -380,10 +496,10 @@ $VenvPy = Join-Path (Join-Path $VenvDir 'Scripts') 'python.exe'
 if ($Backend -eq 'uv') {
     $ok = Invoke-Quiet 'creating the virtualenv' 'uv' @(
         'venv', '--python', ">=3.$MinMinor,<3.$($MaxTested + 1)", $VenvDir
-    )
+    ) 40
     if (-not $ok) {
         Write-Warn "no tested Python (3.$MinMinor-3.$MaxTested) - trying anything newer"
-        $ok = Invoke-Quiet 'creating the virtualenv' 'uv' @('venv', '--python', ">=3.$MinMinor", $VenvDir)
+        $ok = Invoke-Quiet 'creating the virtualenv' 'uv' @('venv', '--python', ">=3.$MinMinor", $VenvDir) 40
     }
     if (-not $ok) {
         Get-Content (Join-Path $HomeDir 'install.log') -ErrorAction SilentlyContinue |
@@ -406,7 +522,7 @@ if ($Backend -eq 'uv') {
     # which reads like a broken script rather than a redirected interpreter.
     if (-not (Test-Path $VenvPy)) { Stop-Install (Get-RedirectedVenvHelp $VenvDir) }
 
-    Invoke-Quiet 'upgrading pip' $VenvPy @('-m', 'pip', 'install', '--upgrade', 'pip') | Out-Null
+    Invoke-Quiet 'upgrading pip' $VenvPy @('-m', 'pip', 'install', '--upgrade', 'pip') 48 | Out-Null
 }
 
 if (-not (Test-Path $VenvPy)) { Stop-Install (Get-RedirectedVenvHelp $VenvDir) }
@@ -417,14 +533,15 @@ Write-Step 'Installing yeet and its dependencies'
 Write-Info "from $Source"
 
 if ($Backend -eq 'uv') {
-    $ok = Invoke-Quiet 'resolving and downloading' 'uv' @('pip', 'install', '--python', $VenvPy, $Source)
+    $ok = Invoke-Quiet 'resolving and downloading' 'uv' @('pip', 'install', '--python', $VenvPy, $Source) 82
 } else {
-    $ok = Invoke-Quiet 'resolving and downloading' $VenvPy @('-m', 'pip', 'install', $Source)
+    $ok = Invoke-Quiet 'resolving and downloading' $VenvPy @('-m', 'pip', 'install', $Source) 82
 }
 if (-not $ok) {
     Write-Host ''
+    Clear-Bar
     Get-Content (Join-Path $HomeDir 'install.log') -ErrorAction SilentlyContinue |
-        ForEach-Object { Write-Info $_ }
+        ForEach-Object { Write-Plain $_ }
     Stop-Install "the install failed. The full log is at $(Join-Path $HomeDir 'install.log')"
 }
 
@@ -434,9 +551,9 @@ if (-not $ok) {
 # asks you to install another package is a flag that does not work. Non-fatal
 # and separate from $Source for the same reasons as in install.sh.
 if ($Backend -eq 'uv') {
-    $tui = Invoke-Quiet 'adding the dashboard' 'uv' @('pip', 'install', '--python', $VenvPy, 'textual>=0.80')
+    $tui = Invoke-Quiet 'adding the dashboard' 'uv' @('pip', 'install', '--python', $VenvPy, 'textual>=0.80') 88
 } else {
-    $tui = Invoke-Quiet 'adding the dashboard' $VenvPy @('-m', 'pip', 'install', 'textual>=0.80')
+    $tui = Invoke-Quiet 'adding the dashboard' $VenvPy @('-m', 'pip', 'install', 'textual>=0.80') 88
 }
 if (-not $tui) { Write-Warn 'no dashboard: --tui will use the streaming view' }
 
@@ -492,6 +609,9 @@ if (-not $PathOk -and -not $env:YEET_NO_MODIFY_PATH) {
 }
 
 # --- what the user has, and what they do next --------------------------------
+# Everything below writes whole lines and expects to own the cursor, so the bar
+# is retired here rather than at the very end.
+Complete-Bar
 Write-Host ''
 
 $dockerNote = 'No Docker - `runs-on: local` jobs still run (winget install Docker.DockerDesktop)'
@@ -524,3 +644,7 @@ if ($NeedsNewShell) {
 Write-Host ''
 Write-Plain '  remove it again with  yeet-uninstall'
 Write-Host ''
+
+# The console was switched to UTF-8 to draw the wordmark. `irm | iex` runs in
+# the user's own session, so it is handed back the way it was found.
+Restore-Console

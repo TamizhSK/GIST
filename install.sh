@@ -217,17 +217,140 @@ banner() {
     printf '\n  %sa local GitHub Actions runner, with a dialect of its own%s\n\n' "$MUTE" "$N"
 }
 
-# A step counter rather than a bare bullet: on a slow network the pip step can
-# sit for a minute, and "3/4" is the difference between waiting and wondering.
+# ── the progress bar ──────────────────────────────────────────────────────────
+# One bar, pinned to the LAST line, with the log scrolling above it. That
+# ordering is the whole trick: a bar printed above its own log is pushed off
+# the top by the first thing that happens after it, so the bar goes last and
+# every log line is written by erasing it, printing, and drawing it again.
+#
+# It replaces a spinner that said only "something is happening". On a slow
+# network the pip step can sit for a minute, and the question a person is
+# actually asking then is "how much of this is left".
+#
+# TTY only. Into a pipe or a CI log this whole mechanism degrades to the plain
+# line-per-event output it had before — carriage returns in a log file are
+# noise, and the log is the artifact there.
+PCT=0
+BAR_ON=0
+BAR_LABEL=''
+
+# Known here rather than at the panel far below, because the bar is measured
+# from it and the bar runs long before that point.
+#
+# ASKED THROUGH FD 2, and that is the whole subtlety. Command substitution
+# gives the inner command a PIPE for stdout, so `tput cols` cannot see a
+# terminal there and quietly answers with the terminfo default — 80 — on a
+# window of any size. Every bar came out 69 columns wide. stderr is still the
+# terminal inside `$( )`, so that is what gets measured.
+#
+# `stty size` first because it reads the live window; `tput cols` second
+# because busybox stty is not guaranteed to have `size`; $COLUMNS third
+# because an interactive shell keeps it current; 80 last because every
+# terminal is at least that.
+COLS=''
+if [ "$TTY" = 1 ]; then
+    # `<&2` BEFORE `2>/dev/null`, and the order is not cosmetic: redirections
+    # are applied left to right, so silencing stderr first and then duplicating
+    # it into stdin hands `stty` /dev/null to measure.
+    COLS=$(stty size <&2 2>/dev/null | awk '{print $2}') || COLS=''
+    if [ -z "$COLS" ]; then COLS=$(tput cols <&2 2>/dev/null) || COLS=''; fi
+fi
+case "$COLS" in ''|*[!0-9]*) COLS="${COLUMNS:-80}" ;; esac
+case "$COLS" in ''|*[!0-9]*) COLS=80 ;; esac
+
+#: Everything on the bar's line that is not the bar itself: two leading spaces,
+#: `[`, `]`, a space, `100%`, and a space of slack at the right so a full bar
+#: never touches the last column — which is where a terminal decides to wrap.
+BAR_CHROME=11
+
+if [ "$UNICODE" = 1 ]; then
+    _FULL='█'; _EMPTY='░'
+else
+    _FULL='#'; _EMPTY='-'
+fi
+
+bar_draw() {
+    [ "$TTY" = 1 ] || return 0
+    [ $# -gt 0 ] && BAR_LABEL="$1"
+
+    # Full width, less the chrome. The floor matters more than it looks: an
+    # 80-column terminal is the assumption, but this also runs in a 40-column
+    # split, and a bar computed to a negative width prints garbage rather than
+    # nothing.
+    #
+    # `$COLS` is measured once, at startup, and not per draw — `tput cols` is a
+    # process, and this redraws ten times a second. A window resized mid-install
+    # keeps the old width until the next run.
+    _w=$((COLS - BAR_CHROME))
+    [ "$_w" -lt 10 ] && _w=10
+
+    _fill=$((PCT * _w / 100))
+    _i=0; _bar=''
+    while [ "$_i" -lt "$_w" ]; do
+        if [ "$_i" -lt "$_fill" ]; then _bar="$_bar$_FULL"; else _bar="$_bar$_EMPTY"; fi
+        _i=$((_i + 1))
+    done
+    printf '\r  %s[%s%s%s]%s %s%3d%%%s%s' \
+        "$D" "$ACCENT" "$_bar" "$D" "$N" "$B" "$PCT" "$N" "${ESC}[K"
+    BAR_ON=1
+}
+
+bar_clear() {
+    [ "$BAR_ON" = 1 ] || return 0
+    printf '\r%s' "${ESC}[K"
+    BAR_ON=0
+}
+
+# Leave a finished bar in the scrollback rather than erasing it — "100%" is the
+# receipt that the thing completed.
+bar_finish() {
+    [ "$TTY" = 1 ] || return 0
+    PCT=100
+    bar_draw
+    printf '\n'
+    BAR_ON=0
+}
+
+# Every log writer erases the bar, prints its line, and puts the bar back.
+# ON A TERMINAL, THE BAR IS THE WHOLE REPORT. `step` and `ok` and `info` do not
+# print a line; they retitle the bar, and it is the one thing on screen under
+# the wordmark. A four-step install narrating fifteen lines of its own
+# bookkeeping is telling you what it is doing instead of showing you how far
+# along it is, and the lines are gone from your attention a second later
+# anyway.
+#
+# INTO A PIPE, ALL OF IT PRINTS. That is where the transcript has to be
+# complete: a CI log, a redirect someone pastes into an issue, `install.log`.
+# The bar is the thing that cannot survive there, and the log is the thing that
+# cannot survive on the terminal, so each medium gets the one it can keep.
+#
+# `warn` and `die` print in BOTH. A warning that scrolled past inside a
+# progress bar was never delivered.
 STEP_NO=0
 step() {
     STEP_NO=$((STEP_NO + 1))
-    printf '%s%s[%s/%s]%s %s%s%s\n' "$B" "$ACCENT" "$STEP_NO" "$TOTAL_STEPS" "$N" "$B" "$*" "$N"
+    # A FLOOR, never an assignment. Step 4 begins at 75% by this arithmetic and
+    # step 3 has usually crept past 85 by the time it is reached, so setting it
+    # outright ran the bar backwards — which reads as the installer losing its
+    # place rather than as a change of phase. Progress only ever goes forward.
+    _floor=$(((STEP_NO - 1) * 100 / TOTAL_STEPS))
+    if [ "$_floor" -gt "$PCT" ]; then PCT="$_floor"; fi
+    if [ "$TTY" = 0 ]; then
+        printf '%s[%s/%s]%s %s\n' "$ACCENT" "$STEP_NO" "$TOTAL_STEPS" "$N" "$*"
+        return 0
+    fi
+    bar_draw "$*"
 }
-ok()    { printf '      %s%s%s %s\n' "$G" "$TICK" "$N" "$*"; }
-info()  { printf '      %s%s%s\n' "$MUTE" "$*" "$N"; }
-warn()  { printf '      %s%s%s %s\n' "$Y" "$WARN_G" "$N" "$*"; }
-die()   { printf '\n  %s%s %s%s\n\n' "$R" "$CROSS" "$*" "$N" >&2; exit 1; }
+ok() {
+    if [ "$TTY" = 0 ]; then printf '      %s %s\n' "$TICK" "$*"; return 0; fi
+    bar_draw "$*"
+}
+info() {
+    if [ "$TTY" = 0 ]; then printf '      %s\n' "$*"; return 0; fi
+    bar_draw "$*"
+}
+warn()  { bar_clear; printf '      %s%s%s %s\n' "$Y" "$WARN_G" "$N" "$*"; bar_draw; }
+die()   { bar_clear; printf '\n  %s%s %s%s\n\n' "$R" "$CROSS" "$*" "$N" >&2; exit 1; }
 
 # Runs a command with a spinner, keeping its output for the failure path only.
 # The success path stays quiet on purpose: pip's resolver output is 40 lines of
@@ -239,25 +362,47 @@ die()   { printf '\n  %s%s %s%s\n\n' "$R" "$CROSS" "$*" "$N" >&2; exit 1; }
 _TICK=0.1
 sleep 0.1 2>/dev/null || _TICK=1
 
+# spin LABEL TARGET_PCT COMMAND...
+#
+# Runs COMMAND with the bar creeping toward TARGET_PCT while it works, and
+# lands exactly on TARGET_PCT when it returns. The creep stops one short of the
+# target on purpose: a bar that reaches its mark before the work is done is
+# lying, and the last percent is what says "this step finished" rather than
+# "this step is nearly finished".
+#
+# On failure the bar goes back to where the step started, so a retried step
+# does not appear to have made progress it did not make.
 spin() {
-    _label="$1"; shift
+    _label="$1"; _target="$2"; shift 2
     if [ "$TTY" = 0 ]; then
         info "$_label..."
         "$@" >"$HOME_DIR/install.log" 2>&1 || return 1
+        PCT="$_target"
         return 0
     fi
+    _was="$PCT"
     "$@" >"$HOME_DIR/install.log" 2>&1 &
     _pid=$!
-    _frames='- \ | /'
+    _ticks=0
+    bar_draw "$_label"
     while kill -0 "$_pid" 2>/dev/null; do
-        for _f in $_frames; do
-            printf '\r      %s%s%s %s ' "$ACCENT" "$_f" "$N" "$_label"
-            sleep "$_TICK"
-            kill -0 "$_pid" 2>/dev/null || break
-        done
+        sleep "$_TICK"
+        _ticks=$((_ticks + 1))
+        # One percent per half second at the usual 0.1s tick. Slow enough that
+        # a 40-second pip install does not run out of bar, and fast enough to
+        # be visibly moving.
+        if [ "$((_ticks % 5))" = 0 ] && [ "$PCT" -lt "$((_target - 1))" ]; then
+            PCT=$((PCT + 1))
+        fi
+        bar_draw "$_label"
     done
-    wait "$_pid" || { printf '\r%*s\r' 70 ''; return 1; }
-    printf '\r%*s\r' 70 ''
+    if ! wait "$_pid"; then
+        PCT="$_was"
+        bar_draw "$_label"
+        return 1
+    fi
+    PCT="$_target"
+    bar_draw "$_label"
     return 0
 }
 
@@ -393,11 +538,14 @@ if [ "$BACKEND" = uv ]; then
     #
     # It is a preference and not a requirement: a box whose only interpreter is
     # newer than the range still gets an install, with a line saying so.
-    if ! spin "creating the virtualenv" \
+    if ! spin "creating the virtualenv" 40 \
         uv venv --python ">=3.$MIN_MINOR,<3.$((MAX_TESTED + 1))" "$HOME_DIR/venv"; then
         warn "no tested Python (3.$MIN_MINOR-3.$MAX_TESTED) available — trying anything newer"
-        if ! spin "creating the virtualenv" \
+        if ! spin "creating the virtualenv" 40 \
             uv venv --python ">=3.$MIN_MINOR" "$HOME_DIR/venv"; then
+            # The bar owns the last line, so anything printed straight to the
+            # terminal has to retire it first or it lands on top of the bar.
+            bar_clear
             sed 's/^/      /' "$HOME_DIR/install.log" >&2 2>/dev/null || true
             die "uv could not create a virtualenv.
       Re-run with YEET_NO_UV=1 to use python -m venv instead."
@@ -407,7 +555,7 @@ if [ "$BACKEND" = uv ]; then
 else
     "$PYTHON" -m venv "$HOME_DIR/venv" || die "could not create a virtualenv in $HOME_DIR"
     resolve_venv
-    spin "upgrading pip" "$VENV_PY" -m pip install --upgrade pip || \
+    spin "upgrading pip" 48 "$VENV_PY" -m pip install --upgrade pip || \
         warn "could not upgrade pip; continuing with the bundled one"
 fi
 ok "$HOME_DIR ${MUTE}(python $("$VENV_PY" -c 'import platform; print(platform.python_version())' 2>/dev/null))${N}"
@@ -417,13 +565,14 @@ step "Installing yeet and its dependencies"
 info "from $SOURCE"
 INSTALL_FAILED=""
 if [ "$BACKEND" = uv ]; then
-    spin "resolving and downloading" uv pip install --python "$VENV_PY" "$SOURCE" \
+    spin "resolving and downloading" 82 uv pip install --python "$VENV_PY" "$SOURCE" \
         || INSTALL_FAILED=1
 else
-    spin "resolving and downloading" "$VENV_PY" -m pip install "$SOURCE" \
+    spin "resolving and downloading" 82 "$VENV_PY" -m pip install "$SOURCE" \
         || INSTALL_FAILED=1
 fi
 if [ -n "$INSTALL_FAILED" ]; then
+    bar_clear
     say ""
     sed 's/^/      /' "$HOME_DIR/install.log" >&2 2>/dev/null || true
     die "the install failed. The full log is at $HOME_DIR/install.log"
@@ -441,10 +590,10 @@ fi
 # nicety. This way a machine with no Textual wheel still gets a working yeet,
 # and `--tui` degrades to the streaming view exactly as designed.
 if [ "$BACKEND" = uv ]; then
-    spin "adding the dashboard" uv pip install --python "$VENV_PY" 'textual>=0.80' \
+    spin "adding the dashboard" 88 uv pip install --python "$VENV_PY" 'textual>=0.80' \
         || warn "no dashboard: --tui will use the streaming view"
 else
-    spin "adding the dashboard" "$VENV_PY" -m pip install 'textual>=0.80' \
+    spin "adding the dashboard" 88 "$VENV_PY" -m pip install 'textual>=0.80' \
         || warn "no dashboard: --tui will use the streaming view"
 fi
 # `head -1`: `yeet --version` reports the interpreter, the OS and Docker under
@@ -545,6 +694,10 @@ if [ "$PATH_OK" = 0 ] && [ -z "${YEET_NO_MODIFY_PATH:-}" ]; then
     fi
 fi
 
+# Everything below writes whole lines and expects to own the cursor, so the bar
+# is retired here rather than at the end of the script.
+bar_finish
+
 # ── optional pieces, named rather than assumed ────────────────────────────────
 say ""
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
@@ -577,8 +730,6 @@ READY='yeet is ready.'
 # Fit the terminal, or do not draw a box at all. A fixed 72-column frame wraps
 # on an 80-column window with anything in the gutter and on every narrower one,
 # and a wrapped box does not look like a narrow box — it looks like corruption.
-COLS=$( (tput cols) 2>/dev/null || echo "${COLUMNS:-80}" )
-case "$COLS" in ''|*[!0-9]*) COLS=80 ;; esac
 [ "$((COLS - 2))" -lt "$W" ] && W=$((COLS - 2))
 DESC_W=$((W - LEAD - CMD_W - 1))
 
