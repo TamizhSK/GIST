@@ -136,6 +136,21 @@ and it is one line:
 $env:PATH = "$env:LOCALAPPDATA\yeet\bin;$env:PATH"
 ```
 
+**If the wordmark comes out as boxes or `?`.** Whether a terminal can draw
+`█` depends on its font, and no program can ask a terminal what font it is
+using — so there is an explicit way out rather than a guess:
+
+```bash
+YEET_ASCII=1 ./install.sh        # PowerShell: .\install.ps1 -Ascii
+```
+
+**If an install seems stuck.** The terminal shows one progress bar rather than
+a running commentary. `-v` puts every step back:
+
+```bash
+./install.sh -v
+```
+
 Then, before anything else:
 
 ```bash

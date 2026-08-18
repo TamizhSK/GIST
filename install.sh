@@ -66,6 +66,20 @@ REF_EXPLICIT=0
 [ -n "${YEET_REF:-}" ] && REF_EXPLICIT=1
 [ -n "${YEET_REPO:-}" ] && REF_EXPLICIT=1
 
+#: Whether a terminal can RENDER U+2588 depends on its font, and no process can
+#: ask a terminal what font it is using. Every automatic check here is about the
+#: ENCODING, which is a different question — so there has to be a stated way out
+#: for someone whose terminal defeats it, or the only way out is a bug report.
+#: The environment variable is what `curl | sh` needs; that form takes no flags.
+ASCII_FORCED=0
+[ -n "${YEET_ASCII:-}" ] && ASCII_FORCED=1
+
+#: `-v` puts the transcript back on a terminal. The bar is the right default and
+#: it costs exactly one thing: when an install HANGS rather than fails, a
+#: percentage with no history cannot be reported usefully.
+VERBOSE=0
+SELFTEST=0
+
 usage() {
     cat <<'USAGE'
 yeet installer
@@ -80,6 +94,8 @@ Options:
   --version <ref>   a tag, branch or commit from GitHub (default: main)
   --local           install from the clone this script sits in — the default
                     already, when it sits in one
+  --ascii           draw the wordmark and the bar with `#` (YEET_ASCII=1 too)
+  --verbose, -v     print every step instead of one progress bar
   --help            this text
 USAGE
 }
@@ -106,6 +122,12 @@ while [ $# -gt 0 ]; do
                 exit 2
             fi
             shift ;;
+        # Draw the presentation layer and exit, so the bar's invariants can be
+        # asserted in milliseconds instead of by running a 35-second install.
+        # Deliberately absent from `usage`: it is a test hook, not a feature.
+        --selftest) SELFTEST=1; shift ;;
+        --ascii) ASCII_FORCED=1; shift ;;
+        --verbose|-v) VERBOSE=1; shift ;;
         --help|-h) usage; exit 0 ;;
         *) printf 'unknown option: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
@@ -152,6 +174,7 @@ case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
     *[Uu][Tt][Ff]8*|*[Uu][Tt][Ff]-8*) UNICODE=1 ;;
     *)                                UNICODE=0 ;;
 esac
+[ "$ASCII_FORCED" = 1 ] && UNICODE=0
 
 if [ "$UNICODE" = 1 ]; then
     TL='╭'; TR='╮'; BL='╰'; BR='╯'; HZ='─'; VT='│'
@@ -247,16 +270,33 @@ BAR_LABEL=''
 # because busybox stty is not guaranteed to have `size`; $COLUMNS third
 # because an interactive shell keeps it current; 80 last because every
 # terminal is at least that.
-COLS=''
-if [ "$TTY" = 1 ]; then
-    # `<&2` BEFORE `2>/dev/null`, and the order is not cosmetic: redirections
-    # are applied left to right, so silencing stderr first and then duplicating
-    # it into stdin hands `stty` /dev/null to measure.
-    COLS=$(stty size <&2 2>/dev/null | awk '{print $2}') || COLS=''
-    if [ -z "$COLS" ]; then COLS=$(tput cols <&2 2>/dev/null) || COLS=''; fi
-fi
-case "$COLS" in ''|*[!0-9]*) COLS="${COLUMNS:-80}" ;; esac
-case "$COLS" in ''|*[!0-9]*) COLS=80 ;; esac
+# FOUR RUNGS, because each one is redirectable and the next one is what covers
+# it. `./install.sh 2>log` takes out fd 2; a container with no controlling
+# terminal takes out /dev/tty; a non-interactive shell does not export
+# $COLUMNS. 80 is the floor every terminal has met since 1978.
+#
+# `<&2` BEFORE `2>/dev/null` on the first rung, and the order is not cosmetic:
+# redirections are applied left to right, so silencing stderr first and then
+# duplicating it into stdin hands `stty` /dev/null to measure. That bug is why
+# every bar was 69 columns wide on a window of any size.
+measure_cols() {
+    _c=''
+    if [ "$TTY" = 1 ]; then
+        _c=$(stty size <&2 2>/dev/null | awk '{print $2}') || _c=''
+        [ -n "$_c" ] || _c=$(stty size </dev/tty 2>/dev/null | awk '{print $2}') || _c=''
+        [ -n "$_c" ] || _c=$(tput cols <&2 2>/dev/null) || _c=''
+    fi
+    case "$_c" in ''|*[!0-9]*) _c="${COLUMNS:-80}" ;; esac
+    case "$_c" in ''|*[!0-9]*) _c=80 ;; esac
+    printf '%s' "$_c"
+}
+COLS=$(measure_cols)
+
+#: Re-measured every Nth frame rather than every frame or never. Every frame is
+#: a `stty` process ten times a second; never means a window resized mid-install
+#: draws at the old width until the run ends. Ten frames is about a second.
+BAR_REMEASURE_EVERY=10
+BAR_FRAME=0
 
 #: Everything on the bar's line that is not the bar itself: two leading spaces,
 #: `[`, `]`, a space, `100%`, and a space of slack at the right so a full bar
@@ -269,29 +309,76 @@ else
     _FULL='#'; _EMPTY='-'
 fi
 
+#: The bar is drawn only when there is a terminal AND the user has not asked
+#: for the transcript. `-v` is the two of them apart: a terminal that prints
+#: every line, which is what you want the moment an install misbehaves.
+bar_on() { [ "$TTY" = 1 ] && [ "$VERBOSE" = 0 ]; }
+
 bar_draw() {
-    [ "$TTY" = 1 ] || return 0
+    bar_on || return 0
     [ $# -gt 0 ] && BAR_LABEL="$1"
 
-    # Full width, less the chrome. The floor matters more than it looks: an
-    # 80-column terminal is the assumption, but this also runs in a 40-column
-    # split, and a bar computed to a negative width prints garbage rather than
-    # nothing.
+    BAR_FRAME=$((BAR_FRAME + 1))
+    if [ "$((BAR_FRAME % BAR_REMEASURE_EVERY))" = 0 ]; then COLS=$(measure_cols); fi
+
+    # Full width, less the chrome, less a FIXED field for the label. Fixed
+    # because a field that sizes to its contents makes the bar itself change
+    # length every time the label does, and a bar that twitches while the
+    # percentage stands still looks like the percentage is wrong.
     #
-    # `$COLS` is measured once, at startup, and not per draw — `tput cols` is a
-    # process, and this redraws ten times a second. A window resized mid-install
-    # keeps the old width until the next run.
-    _w=$((COLS - BAR_CHROME))
+    # Under 60 columns the label is dropped instead of squeezed: a split pane
+    # gets a bar it can read rather than a bar and four letters of a word.
+    _room=$((COLS - BAR_CHROME))
+    _lw=0
+    if [ "$COLS" -ge 60 ]; then
+        _lw=26
+        [ "$((COLS / 3))" -lt "$_lw" ] && _lw=$((COLS / 3))
+    fi
+    _w=$((_room - _lw - 2))
+    if [ "$_w" -lt 10 ]; then _lw=0; _w=$_room; fi
     [ "$_w" -lt 10 ] && _w=10
 
+    # THE SUNSET, TURNED ON ITS SIDE. The wordmark runs indigo at the top of
+    # the letters to the low sun at their baseline; the bar runs the same six
+    # bands left to right, so the thing filling up is visibly the same object
+    # as the thing above it. One escape per band, not per cell — six writes a
+    # frame rather than a hundred and twenty.
     _fill=$((PCT * _w / 100))
-    _i=0; _bar=''
+    _i=0; _bar=''; _band=-1
     while [ "$_i" -lt "$_w" ]; do
-        if [ "$_i" -lt "$_fill" ]; then _bar="$_bar$_FULL"; else _bar="$_bar$_EMPTY"; fi
+        if [ "$_i" -lt "$_fill" ]; then
+            _b=$((_i * 6 / _w))
+            if [ "$_b" != "$_band" ]; then
+                _band=$_b
+                case $_b in
+                    0) _bar="$_bar${ESC}[${_BAND_1}m" ;;
+                    1) _bar="$_bar${ESC}[${_BAND_2}m" ;;
+                    2) _bar="$_bar${ESC}[${_BAND_3}m" ;;
+                    3) _bar="$_bar${ESC}[${_BAND_4}m" ;;
+                    4) _bar="$_bar${ESC}[${_BAND_5}m" ;;
+                    *) _bar="$_bar${ESC}[${_BAND_6}m" ;;
+                esac
+            fi
+            _bar="$_bar$_FULL"
+        else
+            if [ "$_band" != "-2" ]; then _band=-2; _bar="$_bar$D"; fi
+            _bar="$_bar$_EMPTY"
+        fi
         _i=$((_i + 1))
     done
-    printf '\r  %s[%s%s%s]%s %s%3d%%%s%s' \
-        "$D" "$ACCENT" "$_bar" "$D" "$N" "$B" "$PCT" "$N" "${ESC}[K"
+
+    if [ "$_lw" -gt 0 ]; then
+        # The label is what turns "stuck at 63%" into "stuck at 63% —
+        # resolving and downloading", which is the difference between a bug
+        # report we can act on and one we cannot.
+        _shown=$(printf '%.*s' "$_lw" "$BAR_LABEL")
+        printf '\r  %s[%s%s]%s %s%3d%%%s  %s%s%s%s' \
+            "$D" "$_bar" "$D" "$N" "$B" "$PCT" "$N" \
+            "$MUTE" "$_shown" "$N" "${ESC}[K"
+    else
+        printf '\r  %s[%s%s]%s %s%3d%%%s%s' \
+            "$D" "$_bar" "$D" "$N" "$B" "$PCT" "$N" "${ESC}[K"
+    fi
     BAR_ON=1
 }
 
@@ -304,12 +391,29 @@ bar_clear() {
 # Leave a finished bar in the scrollback rather than erasing it — "100%" is the
 # receipt that the thing completed.
 bar_finish() {
-    [ "$TTY" = 1 ] || return 0
+    bar_on || return 0
     PCT=100
     bar_draw
     printf '\n'
     BAR_ON=0
 }
+
+# Ctrl-C IS A NORMAL WAY TO LEAVE AN INSTALLER, and it must not leave the
+# terminal mid-frame. Without this the shell prompt lands on top of a half
+# painted bar, and any cursor state the bar set is never given back.
+#
+# `tput cnorm` is belt and braces: this bar never hides the cursor, but the
+# rule is that whoever might have changed it restores it, and a Ctrl-C that
+# leaves an invisible cursor gets blamed on the terminal rather than on us.
+# 130 is the conventional status for SIGINT (128 + 2).
+on_interrupt() {
+    bar_clear
+    [ "$TTY" = 1 ] && { tput cnorm 2>/dev/null || true; }
+    printf '\n%s%s interrupted%s\n' "$Y" "$WARN_G" "$N" >&2
+    exit 130
+}
+trap on_interrupt INT
+trap on_interrupt TERM
 
 # Every log writer erases the bar, prints its line, and puts the bar back.
 # ON A TERMINAL, THE BAR IS THE WHOLE REPORT. `step` and `ok` and `info` do not
@@ -335,18 +439,18 @@ step() {
     # place rather than as a change of phase. Progress only ever goes forward.
     _floor=$(((STEP_NO - 1) * 100 / TOTAL_STEPS))
     if [ "$_floor" -gt "$PCT" ]; then PCT="$_floor"; fi
-    if [ "$TTY" = 0 ]; then
+    if ! bar_on; then
         printf '%s[%s/%s]%s %s\n' "$ACCENT" "$STEP_NO" "$TOTAL_STEPS" "$N" "$*"
         return 0
     fi
     bar_draw "$*"
 }
 ok() {
-    if [ "$TTY" = 0 ]; then printf '      %s %s\n' "$TICK" "$*"; return 0; fi
+    if ! bar_on; then printf '      %s%s%s %s\n' "$G" "$TICK" "$N" "$*"; return 0; fi
     bar_draw "$*"
 }
 info() {
-    if [ "$TTY" = 0 ]; then printf '      %s\n' "$*"; return 0; fi
+    if ! bar_on; then printf '      %s%s%s\n' "$MUTE" "$*" "$N"; return 0; fi
     bar_draw "$*"
 }
 warn()  { bar_clear; printf '      %s%s%s %s\n' "$Y" "$WARN_G" "$N" "$*"; bar_draw; }
@@ -374,7 +478,7 @@ sleep 0.1 2>/dev/null || _TICK=1
 # does not appear to have made progress it did not make.
 spin() {
     _label="$1"; _target="$2"; shift 2
-    if [ "$TTY" = 0 ]; then
+    if ! bar_on; then
         info "$_label..."
         "$@" >"$HOME_DIR/install.log" 2>&1 || return 1
         PCT="$_target"
@@ -407,6 +511,22 @@ spin() {
 }
 
 banner
+
+# The test hook (`--selftest`). Everything above this line is presentation;
+# everything below it touches the disk. Sitting exactly here is what lets a
+# test exercise the real drawing code without a real install.
+if [ "$SELFTEST" = 1 ]; then
+    step "Checking prerequisites"
+    ok "python 3.13.12 (/usr/bin/python3)"
+    for _p in 0 25 50 82; do
+        PCT=$_p
+        bar_draw "resolving and downloading"
+    done
+    warn "a warning drawn while the bar was on screen"
+    bar_finish
+    say "selftest done"
+    exit 0
+fi
 
 # ── 1. what we will build the environment with ────────────────────────────────
 # Two backends, and `uv` is preferred where it exists for a reason that matters
@@ -575,7 +695,8 @@ if [ -n "$INSTALL_FAILED" ]; then
     bar_clear
     say ""
     sed 's/^/      /' "$HOME_DIR/install.log" >&2 2>/dev/null || true
-    die "the install failed. The full log is at $HOME_DIR/install.log"
+    die "the install failed. The full log is at $HOME_DIR/install.log
+      Re-run with -v to watch every step instead of the progress bar."
 fi
 
 # `yeet run --tui` needs Textual, which is an OPTIONAL extra in pyproject.toml.

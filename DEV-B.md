@@ -1,3 +1,7 @@
+> **Note:** the repository was named `TamizhSK/GIST` when this transcript was
+> recorded. It is `TamizhSK/YEET` now, and the URLs below are left exactly as
+> they were run. GitHub still redirects them.
+
 ### Error:1
 
 (.venv) PS C:\Users\shree\Projects\Documents\bmwproject\GIST> powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/TamizhSK/GIST/main/install.ps1 | iex"

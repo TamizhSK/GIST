@@ -23,6 +23,14 @@
   Install from the clone this script sits in — already the default when it sits
   in one, so this only says out loud what would have happened anyway.
 
+.PARAMETER Ascii
+  Draw the wordmark and the bar with `#` instead of block characters. Whether a
+  console can RENDER U+2588 depends on its font, and a font is not something a
+  process can ask about — a raster "Terminal" font shows a box no matter what
+  the codepage says. This is the stated way out for anyone whose console
+  defeats the automatic path. `$env:YEET_ASCII=1` does the same, which is what
+  `irm | iex` needs, since that form cannot take arguments.
+
 .EXAMPLE
   irm https://raw.githubusercontent.com/TamizhSK/YEET/main/install.ps1 | iex
 
@@ -40,7 +48,8 @@
 [CmdletBinding()]
 param(
     [string]$Version = $(if ($env:YEET_REF) { $env:YEET_REF } else { 'main' }),
-    [switch]$Local
+    [switch]$Local,
+    [switch]$Ascii
 )
 
 $ErrorActionPreference = 'Stop'
@@ -67,44 +76,77 @@ try {
     $script:Tty = $false
 }
 
-# The console codepage decides whether the block art can be WRITTEN at all.
-# 65001 is UTF-8; anything else turns the wordmark into a screen of question
-# marks, which is the worse first impression of the two.
+# CAN THIS CONSOLE CARRY THE BLOCK CHARACTERS? Asked by round-tripping them
+# through the active encoding, not by comparing the codepage to 65001 — and the
+# difference is not academic:
 #
-# So ASK FOR IT rather than giving up. A stock Windows PowerShell 5.1 console
-# starts on codepage 437 or 1252 and never on 65001, which meant the machines
-# this file exists for were exactly the ones that got the ASCII fallback. In
-# .NET, assigning Console::OutputEncoding calls SetConsoleOutputCP, so this
-# changes the console itself and not merely how this process encodes.
+#   CP437  (the stock console)  U+2588 -> 0xDB, U+2591 -> 0xB0, both round-trip
+#   CP1252                      both -> 0xA6, which renders as a broken bar
+#   CP65001                     round-trips
 #
-# Verified afterwards rather than assumed — if the assignment is refused, or
-# accepted and does not take, `$Unicode` stays false and the `#` wordmark is
-# still there to fall back to. Restored on the way out by `Restore-Console`,
-# because `irm | iex` runs in the user's own session and leaving their console
-# reconfigured is not this script's business.
+# So a stock 437 console draws the wordmark perfectly and never needed the
+# UTF-8 switch at all. Keying off the codepage declared it incapable and
+# printed the `#` fallback to the machines that least needed it.
 #
-# Only when there is a console to reconfigure. Redirected — CI, a transcript —
-# the wordmark is not drawn at all, so there is nothing to gain by changing the
-# encoding of a stream somebody else owns.
-$script:PrevEncoding = $null
-$script:Unicode = $false
-if ($script:Tty) {
+# 1252 genuinely cannot, and that is the case worth switching for.
+function Test-BlockGlyphs {
     try {
-        if ([Console]::OutputEncoding.CodePage -ne 65001) {
-            $script:PrevEncoding = [Console]::OutputEncoding
-            [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
-        }
-        $script:Unicode = ([Console]::OutputEncoding.CodePage -eq 65001)
+        $enc = [Console]::OutputEncoding
+        $probe = [string][char]0x2588 + [string][char]0x2591
+        return ($enc.GetString($enc.GetBytes($probe)) -eq $probe)
     } catch {
-        $script:Unicode = $false
+        return $false
     }
 }
 
+# Defined BEFORE the block below, which calls it: PowerShell resolves functions
+# at run time, so a call above the definition is a runtime error rather than a
+# parse one — the kind that only shows up on the machine you cannot test on.
 function Restore-Console {
     if ($null -ne $script:PrevEncoding) {
         try { [Console]::OutputEncoding = $script:PrevEncoding } catch { }
         $script:PrevEncoding = $null
     }
+}
+
+$script:PrevEncoding = $null
+$script:Unicode = $false
+$script:AsciiForced = ($Ascii -or $env:YEET_ASCII)
+
+# Only when there is a console to reconfigure. Redirected — CI, a transcript —
+# the wordmark is not drawn at all, so there is nothing to gain by changing the
+# encoding of a stream somebody else owns.
+if ($script:Tty -and -not $script:AsciiForced) {
+    if (Test-BlockGlyphs) {
+        $script:Unicode = $true
+    } else {
+        # Ask for UTF-8, then ask the SAME question again rather than assuming
+        # the assignment worked. Assigning Console::OutputEncoding calls
+        # SetConsoleOutputCP, so this reconfigures the console itself.
+        try {
+            $script:PrevEncoding = [Console]::OutputEncoding
+            [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+            $script:Unicode = Test-BlockGlyphs
+            if (-not $script:Unicode) { Restore-Console }
+        } catch {
+            $script:Unicode = $false
+        }
+    }
+}
+
+# WHAT THIS STILL CANNOT SEE is the font. A PS 5.1 console set to the raster
+# "Terminal" font cannot draw U+2588 at any codepage, and no API asks a console
+# what font it is using. `-Ascii` / $env:YEET_ASCII is the stated way out, and
+# docs/VERIFY-WINDOWS.md is how we find out whether it is needed in practice.
+
+# The encoding is restored on every exit path, not only the happy one: this
+# trap catches a terminating error, `Stop-Install` restores before exiting, and
+# the last line of the script restores after the summary. A `finally` around
+# the whole body would be the tidier shape and would also cover Ctrl-C; it is
+# not worth re-indenting 300 lines of a file nobody on this team can execute.
+trap {
+    Restore-Console
+    break
 }
 
 function Write-Plain([string]$Text) { Write-Host $Text }
@@ -122,6 +164,7 @@ function Write-Colour([string]$Text, [string]$Colour) {
 # prints instead, because that is where the record has to be complete.
 $script:Pct = 0
 $script:BarOn = $false
+$script:BarLabel = ''
 
 function Get-ConsoleWidth {
     # 80 when it cannot be known: every console is at least that wide, and a
@@ -133,19 +176,59 @@ function Get-ConsoleWidth {
     return 80
 }
 
+#: The wordmark's sunset, in the six console colours Write-Banner already uses.
+#: The bar runs the same ramp left to right that the letters run top to bottom,
+#: so the thing filling up is visibly the same object as the thing above it.
+#: Write-Host cannot colour parts of one string, so the bar is written as six
+#: -NoNewline segments on one line.
+$script:BarBands = @('DarkBlue', 'DarkMagenta', 'Magenta', 'Magenta', 'Yellow', 'Yellow')
+
 function Write-Bar {
     if (-not $script:Tty) { return }
+    $cols = Get-ConsoleWidth
     # Two leading spaces, the brackets, a space, and `100%` — the fixed chrome
     # the bar itself has to leave room for, plus one column of slack so a full
     # bar never touches the last cell and wraps the line.
-    $width = (Get-ConsoleWidth) - 11
+    $room = $cols - 11
+
+    # A FIXED label field, not one that sizes to its contents: a field that
+    # grows makes the bar change length whenever the label does, and a bar that
+    # twitches while the percentage stands still looks like the percentage is
+    # wrong. Under 60 columns the label is dropped rather than squeezed.
+    $labelW = 0
+    if ($cols -ge 60) {
+        $labelW = 26
+        if ([int]($cols / 3) -lt $labelW) { $labelW = [int]($cols / 3) }
+    }
+    $width = $room - $labelW - 2
+    if ($width -lt 10) { $labelW = 0; $width = $room }
     if ($width -lt 10) { $width = 10 }
+
     $fill = [int]($script:Pct * $width / 100)
     if ($fill -gt $width) { $fill = $width }
     if ($script:Unicode) { $full = [char]0x2588; $empty = [char]0x2591 } else { $full = '#'; $empty = '-' }
-    $bar = (New-Object string $full, $fill) + (New-Object string $empty, ($width - $fill))
+
+    Write-Host "`r  [" -NoNewline
+    # One segment per band, each the same length, so the ramp is even.
+    $drawn = 0
+    for ($b = 0; $b -lt 6; $b++) {
+        $upto = [int](($b + 1) * $width / 6)
+        $seg = [Math]::Min($upto, $fill) - $drawn
+        if ($seg -gt 0) {
+            Write-Host (New-Object string $full, $seg) -NoNewline -ForegroundColor $script:BarBands[$b]
+            $drawn += $seg
+        }
+    }
+    if ($width - $drawn -gt 0) {
+        Write-Host (New-Object string $empty, ($width - $drawn)) -NoNewline -ForegroundColor DarkGray
+    }
     $pct = ("{0,3}" -f $script:Pct)
-    Write-Host ("`r  [$bar] $pct%") -NoNewline
+    Write-Host "] $pct%" -NoNewline
+    if ($labelW -gt 0) {
+        $text = "$($script:BarLabel)"
+        if ($text.Length -gt $labelW) { $text = $text.Substring(0, $labelW) }
+        Write-Host ("  " + $text.PadRight($labelW)) -NoNewline -ForegroundColor DarkGray
+    }
     $script:BarOn = $true
 }
 
@@ -181,15 +264,18 @@ function Write-Step([string]$Text) {
         Write-Colour "[$($script:StepNo)/$TotalSteps] $Text" 'Yellow'
         return
     }
+    $script:BarLabel = $Text
     Write-Bar
 }
 
 function Write-Ok([string]$Text) {
     if (-not $script:Tty) { Write-Colour "      ok  $Text" 'Green'; return }
+    $script:BarLabel = $Text
     Write-Bar
 }
 function Write-Info([string]$Text) {
     if (-not $script:Tty) { Write-Plain "      $Text"; return }
+    $script:BarLabel = $Text
     Write-Bar
 }
 # Warnings print on a console TOO. One that scrolled past inside a progress bar
@@ -258,6 +344,7 @@ function Invoke-Quiet {
     #>
     param([string]$Label, [string]$Exe, [string[]]$Arguments, [int]$Target = 0)
 
+    $script:BarLabel = $Label
     Write-Info "$Label..."
     # Half the remaining distance before the work, the rest after it. The call
     # below is synchronous — a native command cannot be polled without giving

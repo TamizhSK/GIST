@@ -1,3 +1,7 @@
+> **Note:** the repository was named `TamizhSK/GIST` when this transcript was
+> recorded. It is `TamizhSK/YEET` now, and the URLs below are left exactly as
+> they were run. GitHub still redirects them.
+
 1. Powershell installation command: while running this command out of 4 steps, 2 steps were positive but in the 3rd one it failed and the error encountered was:
 
 python.exe :   Running command git clone --filter=blob:none --quiet https://github.com/TamizhSK/GIST 
