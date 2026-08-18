@@ -495,6 +495,42 @@ function Find-Python {
 
 Write-Banner
 
+# --- before anything is installed --------------------------------------------
+# SAID FIRST, not in the summary, because by the summary it is advice about
+# something the reader has already finished doing. Someone installing a
+# workflow runner is about to run a workflow, and Docker Desktop takes a minute
+# to come up — that minute is better spent now than after `yeet run` has
+# already failed once.
+#
+# Precise about what needs it: the INSTALL does not, and saying it does would
+# be a lie that turns a working offline install into a support question.
+# `yeet run` does, for every job that is not `cooked_on: local`.
+#
+# Never fatal, and never a prompt: `irm | iex` has no console to answer one.
+function Show-DockerPreflight {
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        Write-Colour '  !   Docker is not installed.' 'Yellow'
+        Write-Plain  '      Installing yeet does not need it. Running a workflow does -'
+        Write-Plain  '      without it only `cooked_on: local` jobs will run.'
+        Write-Host ''
+        return
+    }
+    # Through Invoke-Native: `docker info` against a dead daemon writes to
+    # stderr, and this is the exact call that used to kill the script.
+    Invoke-Native { & docker info *> $null }
+    if ($LASTEXITCODE -eq 0) {
+        Write-Colour '  ok  Docker is running - container jobs will work.' 'Green'
+        Write-Host ''
+        return
+    }
+    Write-Colour '  !   Start Docker Desktop now, and leave it running.' 'Yellow'
+    Write-Plain  '      yeet runs each job in a container. The install below does not'
+    Write-Plain  '      need the daemon, but `yeet run` does - starting it now means it'
+    Write-Plain  '      is ready by the time the install finishes.'
+    Write-Host ''
+}
+Show-DockerPreflight
+
 # --- 1. prerequisites --------------------------------------------------------
 Write-Step 'Checking prerequisites'
 

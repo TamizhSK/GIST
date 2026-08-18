@@ -528,6 +528,39 @@ if [ "$SELFTEST" = 1 ]; then
     exit 0
 fi
 
+# ── before anything is installed ──────────────────────────────────────────────
+# SAID FIRST, not in the summary, because by the summary it is advice about
+# something the reader has already finished doing. Someone installing a
+# workflow runner is about to run a workflow, and the daemon takes a minute to
+# come up — that minute is better spent now than after `yeet run` has already
+# failed once.
+#
+# Precise about what needs it: the INSTALL does not, and saying it does would
+# be a lie that turns a working offline install into a support question. `yeet
+# run` does, for every job that is not `cooked_on: local`.
+#
+# Never fatal, and never a prompt. `curl | sh` has the script on stdin, so
+# there is nobody to answer one.
+preflight_docker() {
+    if ! command -v docker >/dev/null 2>&1; then
+        printf '  %s%s%s  Docker is not installed.\n' "$Y" "$WARN_G" "$N"
+        printf '     %sInstalling yeet does not need it. Running a workflow does —\n' "$MUTE"
+        printf '     without it only `cooked_on: local` jobs will run.%s\n\n' "$N"
+        return 0
+    fi
+    if docker info >/dev/null 2>&1; then
+        printf '  %s%s%s  Docker is running — container jobs will work.%s\n\n' \
+            "$G" "$TICK" "$MUTE" "$N"
+        return 0
+    fi
+    printf '  %s%s%s  %sStart Docker Desktop now, and leave it running.%s\n' \
+        "$Y" "$WARN_G" "$N" "$B" "$N"
+    printf '     %syeet runs each job in a container. The install below does not\n' "$MUTE"
+    printf '     need the daemon, but `yeet run` does — starting it now means it\n'
+    printf '     is ready by the time the install finishes.%s\n\n' "$N"
+}
+preflight_docker
+
 # ── 1. what we will build the environment with ────────────────────────────────
 # Two backends, and `uv` is preferred where it exists for a reason that matters
 # more than its speed: it can PROVISION a Python. On a box whose only
