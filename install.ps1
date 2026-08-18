@@ -37,7 +37,7 @@
 .EXAMPLE
   # Pinning a version needs the script on disk — `iex` cannot take arguments.
   irm https://raw.githubusercontent.com/TamizhSK/YEET/main/install.ps1 -OutFile i.ps1
-  .\i.ps1 -Version v0.4
+  .\i.ps1 -Version v0.5
 
 .NOTES
   Under a Restricted execution policy `irm | iex` is refused. That is the
@@ -336,6 +336,36 @@ function Write-Banner {
 
 # --- helpers -----------------------------------------------------------------
 
+function Invoke-Native {
+    <#
+      Run a native command with stderr treated as OUTPUT rather than as failure,
+      and hand back whatever it wrote.
+
+      THE SAME TRAP `Invoke-Quiet` DOCUMENTS, at the call sites that are not
+      `Invoke-Quiet`. With `$ErrorActionPreference = 'Stop'` in force, ANY
+      native command writing to stderr raises a terminating NativeCommandError
+      — and a native command writing to stderr is not an error, it is a native
+      command talking.
+
+      `docker info` on a machine with no daemon is the case that proved it: the
+      install had finished, all four steps green, and the summary line that
+      merely asks whether Docker is up killed the script with exit 1.
+
+      A scriptblock rather than an exe plus args, so each call site keeps its
+      own redirection (`*> $null`, `2>$null`, `*> $log`) and its own splatting.
+      $LASTEXITCODE is global and survives the call.
+    #>
+    param([scriptblock]$Body)
+
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Body
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 function Invoke-Quiet {
     <#
       Run a command, keep its output for the failure path only. pip's resolver
@@ -354,38 +384,29 @@ function Invoke-Quiet {
     if ($Target -gt 0) { Set-Progress ([int](($script:Pct + $Target) / 2)) }
     $log = Join-Path $HomeDir 'install.log'
 
-    # A NATIVE COMMAND WRITING TO STDERR IS NOT AN ERROR, and this is the line
-    # where believing otherwise killed the install. pip narrates its work on
-    # stderr — "Running command git clone --filter=blob:none --quiet ..." — and
-    # with `$ErrorActionPreference = 'Stop'` in force, PowerShell turns each of
-    # those records into a terminating NativeCommandError. The install died at
-    # step 3 of 4 on a PROGRESS MESSAGE, with a stack trace pointing here and
-    # nothing in it naming pip.
+    # Through `Invoke-Native` like every other native call in this file. pip
+    # narrates its work on stderr — "Running command git clone
+    # --filter=blob:none --quiet ..." — and this is the line where treating
+    # that as a failure killed the install at step 3 of 4, on a progress
+    # message, with a stack trace naming this file and not pip.
     #
     # `*> $log` makes it worse rather than better: redirecting the stream is
-    # what wraps stderr as ErrorRecords in the first place.
+    # what wraps stderr as ErrorRecords in the first place. The exit code is
+    # the only thing that decides whether this worked, which is what the return
+    # below has always used.
     #
-    # The exit code is the only thing that decides whether this worked, which
-    # is what the return below has always used. So stderr goes to the log like
-    # everything else, and `Stop` is restored on the way out for the cmdlets
-    # that genuinely want it.
-    $previous = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        # Call operator with a splatted array, so a path with a space in it
-        # stays one argument. `C:\Users\Tamizh Selvan\` is the classic way this
-        # breaks.
-        & $Exe @Arguments *> $log
-    } finally {
-        $ErrorActionPreference = $previous
-    }
+    # The call operator with a SPLATTED ARRAY stays inside the scriptblock, so
+    # a path with a space in it is still one argument. `C:\Users\Tamizh
+    # Selvan\` is the classic way that breaks, and it is why this cannot
+    # become a string-quoted command line.
+    Invoke-Native { & $Exe @Arguments *> $log }
     if ($Target -gt 0 -and $LASTEXITCODE -eq 0) { Set-Progress $Target }
     return ($LASTEXITCODE -eq 0)
 }
 
 function Get-PythonVersion([string]$Exe) {
     try {
-        $out = & $Exe -c 'import platform; print(platform.python_version())' 2>$null
+        $out = Invoke-Native { & $Exe -c 'import platform; print(platform.python_version())' 2>$null }
         if ($LASTEXITCODE -ne 0) { return $null }
         return "$out".Trim()
     } catch {
@@ -422,7 +443,7 @@ function Test-StorePython([string]$Exe, [string[]]$Prefix) {
     #>
     try {
         $probe = $Prefix + @('-c', 'import sys; print(sys.executable)')
-        $where = & $Exe @probe 2>$null
+        $where = Invoke-Native { & $Exe @probe 2>$null }
         if ($LASTEXITCODE -ne 0) { return $false }
         return ("$where" -match 'WindowsApps|PythonSoftwareFoundation\.Python')
     } catch {
@@ -457,7 +478,7 @@ function Find-Python {
         if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { continue }
         $probe = $prefix + @('-c', "import sys; sys.exit(0 if sys.version_info >= (3, $MinMinor) else 1)")
         try {
-            & $exe @probe 2>$null
+            Invoke-Native { & $exe @probe 2>$null }
             if ($LASTEXITCODE -ne 0) { continue }
         } catch {
             continue
@@ -595,7 +616,7 @@ if ($Backend -eq 'uv') {
     }
 } else {
     $venvArgs = $PythonPrefix + @('-m', 'venv', $VenvDir)
-    & $PythonExe @venvArgs
+    Invoke-Native { & $PythonExe @venvArgs }
     if ($LASTEXITCODE -ne 0) { Stop-Install "could not create a virtualenv in $VenvDir" }
 
     # CHECK BEFORE USING IT. A Microsoft Store Python runs in an app container
@@ -645,7 +666,7 @@ if ($Backend -eq 'uv') {
 if (-not $tui) { Write-Warn 'no dashboard: --tui will use the streaming view' }
 
 $VenvYeet = Join-Path (Join-Path $VenvDir 'Scripts') 'yeet.exe'
-$banner = & $VenvYeet --version 2>$null | Select-Object -First 1
+$banner = Invoke-Native { & $VenvYeet --version 2>$null } | Select-Object -First 1
 Write-Ok "$banner"
 
 # --- 4. a launcher on PATH ---------------------------------------------------
@@ -704,7 +725,7 @@ Write-Host ''
 $dockerNote = 'No Docker - `runs-on: local` jobs still run (winget install Docker.DockerDesktop)'
 $dockerColour = 'Yellow'
 if (Get-Command docker -ErrorAction SilentlyContinue) {
-    & docker info *> $null
+    Invoke-Native { & docker info *> $null }
     if ($LASTEXITCODE -eq 0) {
         $dockerNote = 'Docker is running - container jobs will work'
         $dockerColour = 'Green'
