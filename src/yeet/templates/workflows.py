@@ -26,13 +26,26 @@ GITIGNORE_BLOCK = """\
 .yeet/tmp/
 .yeet/runs/
 .yeet/artifacts/
-.yeet/.secrets/
 
-# `yeet secrets import` writes real tokens here in the clear. The encrypted
-# store (`yeet secrets set`) is the alternative; either way this file is not
-# something to commit.
+# The encrypted secret store (`yeet secrets set`). Encrypted is not public:
+# .yeet/ is bind-mounted into every container and is the directory people tar
+# up and mail around, so the ciphertext stays out of history too.
+.yeet/.secrets
+
+# `yeet secrets import` writes real tokens here in the clear. Either file is
+# a thing to lose a token over; neither is a thing to commit.
 .env
+.env.*
+!.env.example
 """
+"""The block `yeet init` appends to `.gitignore`.
+
+`.yeet/.secrets` HAS NO TRAILING SLASH and that is the whole point of this
+comment. It is a FILE — `secrets/store.py::SECRETS_FILE` — and a gitignore
+pattern ending in `/` matches directories ONLY. Written as `.yeet/.secrets/`
+(which it was) the pattern is valid, silent, and matches nothing at all: every
+project initialised by `yeet init` was one `git add -A` away from committing
+its own encrypted secret store, and nothing anywhere would have said so."""
 
 
 def _env() -> Environment:

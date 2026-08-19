@@ -18,6 +18,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Any
 
+from yeet.core import gitcreds
 from yeet.core.events import META, STDERR, STDOUT, LogEvent
 from yeet.core.ir import Job
 from yeet.core.project import Project
@@ -256,6 +257,11 @@ class DockerBackend:
         job_layout = layout.job(inst.key)
 
         base = env_mod.container_base_env(run_id=layout.run_id, job_key=inst.key, event=ctx.event)
+        # Between the two on purpose. `container_git_env` is ours and must be
+        # overridable by the user's workflow-level `env:` (which arrives in
+        # `ctx.env`), but it reads the token OUT of `ctx.env` — so the token is
+        # resolved from the merged view and the config is layered underneath.
+        base.update(gitcreds.container_git_env(_job_token(ctx.env)))
         base.update(ctx.env)
 
         # An isolated workspace (`yeet run --clean`) is not inside the tree we
@@ -449,6 +455,21 @@ class DockerBackend:
         )
         _track(container)
         return container
+
+
+def _job_token(env: dict[str, str]) -> str:
+    """The GitHub token this job's steps will see, if any.
+
+    `cmd_run` puts one here when it can find one; a workflow that sets
+    `env: GITHUB_TOKEN: ${{ secrets.MY_PAT }}` puts its own. Either way it is
+    the value the credential helper will read at step time, so it is the value
+    that decides whether the helper is worth installing at all.
+    """
+    for name in gitcreds.TOKEN_ENV_NAMES:
+        value = env.get(name, "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _container_contexts(contexts: Contexts | None) -> Contexts | None:

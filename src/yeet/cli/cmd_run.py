@@ -26,6 +26,7 @@ from typing import Annotated, Any
 import typer
 
 from yeet.cli import EXIT_BAD_WORKFLOW, EXIT_NO_DOCKER, color_enabled
+from yeet.core import gitcreds
 from yeet.core.diagnostics import DiagnosticBag
 from yeet.core.events import FanOut
 from yeet.core.ir import Workflow
@@ -93,6 +94,20 @@ def run(
     # `.env` — `load_secrets` owns that precedence.
     pool = _load_secrets(root, _parse_secrets(secret or []))
 
+    # A container has none of this machine's git credentials, so anything in
+    # the workflow that talks to github.com by hand — `git clone`, `git fetch`,
+    # `pip install git+https://…` — fails in there while working on the host.
+    # Resolved BEFORE the gate so `${{ secrets.GITHUB_TOKEN }}` is a name that
+    # exists, and folded into the pool so it is masked like any other secret.
+    # See `core/gitcreds.py`.
+    token = _github_token(pool)
+    if token:
+        pool.setdefault("GITHUB_TOKEN", token.token)
+        if verbose:
+            typer.secho(
+                f"github.com credentials: {token.source}", fg=typer.colors.BRIGHT_BLACK, err=True
+            )
+
     # E307 — the one Layer 3 rule that needs data Layer 3 cannot reach. The
     # store is tier 5 and validation is tier 3, so the rule lives there as a
     # pure function and the names are handed to it from here. Gated like the
@@ -113,6 +128,11 @@ def run(
 
     masker = Masker()
     masker.update(secrets[k] for k in secret_names if k in secrets)
+    # Explicitly, and not through `secret_names`: a token we injected is one
+    # the workflow never asked for by name, so nothing above would mask it —
+    # and it is about to be handed to every container in the run.
+    if token:
+        masker.add(token.token)
 
     contexts = _contexts(root, event, secrets, variables)
     plan = build_plan(workflow, contexts)
@@ -130,6 +150,7 @@ def run(
         _warn_no_checkout(workflow)
 
     backend = _backend(root, project, workflow)
+    _preflight_docker(backend, project, workflow)
     # `make_console` picks the live tree for a real terminal, plain lines
     # otherwise. Either way it sits beside `RunStore` in a `FanOut`, which is
     # what makes `.yeet/runs/` non-empty and `yeet logs` able to answer —
@@ -144,6 +165,9 @@ def run(
         workflow_name=workflow.display_name,
         event=event,
         max_workers=jobs or os.cpu_count(),
+        # Below the workflow's own `env:` (see `runner._job_env`), so a file
+        # that sets `GITHUB_TOKEN` to something else still wins.
+        env={"GITHUB_TOKEN": token.token} if token else {},
         workflow_env=dict(workflow.env),
         masker=masker,
         # The one place that knows both halves: `storage` implements the
@@ -281,6 +305,25 @@ def _secret_bag(workflow: Workflow, available: set[str]) -> DiagnosticBag:
     return bag
 
 
+def _github_token(pool: dict[str, str]) -> gitcreds.Credential:
+    """A token for github.com — the project's own first, the machine's second.
+
+    The project wins because it is the explicit answer: someone who ran
+    `yeet secrets set GITHUB_TOKEN` in this repository meant THAT token for
+    THIS repository, and silently preferring whatever `gh` happens to be logged
+    in as would run their workflow as the wrong account.
+
+    Only then does `gitcreds.discover_token()` go looking at the machine, which
+    is the case that needs no setup at all: a developer who has ever run
+    `gh auth login` or cloned a private repo over HTTPS already has one.
+    """
+    for name in gitcreds.TOKEN_ENV_NAMES:
+        value = pool.get(name, "").strip()
+        if value:
+            return gitcreds.Credential(value, f"`{name}` from .yeet/.secrets or .env")
+    return gitcreds.discover_token()
+
+
 def _load_secrets(root: Path, overrides: dict[str, str]) -> dict[str, str]:
     """Everything `secrets/store.py` can find, plus `--secret` on top.
 
@@ -337,22 +380,62 @@ def _backend(root: Path, project: Project, workflow: Workflow) -> Backend:
     Deciding once, up front, means a project that cannot reach a daemon but
     only runs local jobs never touches the SDK at all.
     """
-    kinds = set()
+    kinds, _ = _image_kinds(project, workflow)
+    if kinds and kinds <= {ImageKind.LOCAL}:
+        return LocalBackend(root)
+    return DockerBackend(root, project=project)
+
+
+def _image_kinds(project: Project, workflow: Workflow) -> tuple[set[ImageKind], bool]:
+    """Which kinds of image this workflow wants, and whether any is unknowable.
+
+    The second half of the tuple is `runs-on: ${{ matrix.os }}` — the matrix has
+    not been expanded here and there is no leg to ask, so the value genuinely
+    cannot be resolved yet. It is not LOCAL either, so the backend assumes a
+    container and re-resolves per leg, where the value is finally known.
+    """
+    kinds: set[ImageKind] = set()
+    unknowable = False
     for job in workflow.jobs.values():
-        # An unexpanded `runs-on: ${{ matrix.os }}` cannot be resolved here —
-        # the matrix has not been expanded yet and there is no leg to ask. It
-        # is not LOCAL either, so assume a container and let the backend
-        # resolve it per leg, where the value is finally known.
         if job.runs_on and "${{" in job.runs_on:
             kinds.add(ImageKind.BASE)
+            unknowable = True
             continue
         try:
             kinds.add(resolve_image(job, project).kind)
         except ImageResolutionError:
             kinds.add(ImageKind.BASE)
-    if kinds and kinds <= {ImageKind.LOCAL}:
-        return LocalBackend(root)
-    return DockerBackend(root, project=project)
+    return kinds, unknowable
+
+
+def _preflight_docker(backend: Backend, project: Project, workflow: Workflow) -> None:
+    """Reach the daemon ONCE, before the run starts, or exit 3 saying why.
+
+    Three things go wrong without this, and all three are the first experience
+    of a user whose Docker is not running:
+
+    * the connection is attempted from inside the thread pool, once per job, so
+      a five-job workflow prints the same "no daemon" error five times,
+    * it is attempted AFTER the live console has taken over the terminal, so
+      the error lands in the middle of a half-drawn run tree,
+    * every one of those attempts pays its own connect timeout, in parallel,
+      for an answer that was the same before the first one started.
+
+    Skipped when any job's `runs-on` is still an expression: that workflow may
+    turn out to be entirely `cooked_on: local`, and refusing to start it over a
+    daemon it will never touch would be a regression. Those legs keep the
+    existing per-job path, which reaches the same exit code by a slower road.
+    """
+    if not isinstance(backend, DockerBackend):
+        return
+    kinds, unknowable = _image_kinds(project, workflow)
+    if unknowable or not (kinds - {ImageKind.LOCAL}):
+        return
+    try:
+        backend.client  # noqa: B018 - the property IS the connection, and it caches
+    except DockerUnavailable as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(EXIT_NO_DOCKER) from exc
 
 
 def _echo_plan(plan: ExecutionPlan) -> None:

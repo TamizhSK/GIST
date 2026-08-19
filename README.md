@@ -290,20 +290,46 @@ naming which of the two it was.
 
 ## Secrets and variables, imported locally
 
-`yeet secrets import` reads the workflow files, finds every `${{ secrets.X }}`
-and `${{ vars.Y }}` they reference, writes those names to `.env`, and fills in
-the ones your shell already exports:
+**GitHub's repository secrets are write-only.** You can set one and replace one;
+nothing can read a value back out — not the API, not `gh`, not any local runner.
+So running a workflow here needs a **local copy** of each secret, and it goes in
+one of two places in the project directory:
+
+| | where | how |
+|---|---|---|
+| **encrypted** | `.yeet/.secrets` | `yeet secrets set NPM_TOKEN` — prompts, so nothing reaches your shell history |
+| **plain text** | `.env` | a `NPM_TOKEN=…` line, or `yeet secrets import` |
+
+`--secret NAME=value` beats both, for a one-off.
+
+The *names* you need are knowable, because they are in the workflow file.
+`yeet secrets import` reads every `${{ secrets.X }}` and `${{ vars.Y }}` your
+flows reference, writes those names to `.env`, and fills in the ones your shell
+already exports:
 
 ```console
 $ yeet secrets import
-  + AWS_REGION  (variable)
-  = NPM_TOKEN   (secret)  ← from your environment
+  + AWS_REGION   (variable)
+  = NPM_TOKEN    (secret)  → from your environment
+  + SENTRY_DSN   (secret)  set on GitHub (value not readable)
 ```
 
+That last line means the name exists upstream, so your workflow is right and
+only the value is missing here — copy it from wherever it was issued.
+
 Then `yeet run` resolves both. Values read as `secrets.*` are redacted from the
-log and from `.yeet/runs/`; `vars.*` are not, so masking works exactly like you
-expect. Existing entries are never overwritten — safe to re-run whenever someone
-adds a workflow.
+log and from `.yeet/runs/` (including their base64 and URL-encoded forms);
+`vars.*` are not, so masking works exactly like you expect. Existing entries are
+never overwritten — safe to re-run whenever someone adds a workflow.
+
+`GITHUB_TOKEN` is the exception you never have to set: yeet finds one from your
+store, your environment, `gh auth token`, or your git credential helper, masks
+it, and passes it into every container — which is what makes a hand-written
+`git clone https://github.com/…` work in there, on a machine that has none of
+your credentials.
+
+**Full detail — including why GitHub cannot give a value back, precedence, the
+passphrase, and E307 — is in [`docs/secrets.md`](docs/secrets.md).**
 
 ## Status
 
@@ -313,8 +339,8 @@ syntax, and the whole suite is green:
 
 ```
 make check     six gates green (lint · format · imports · types · noprint · test)
-pytest         985 fast tests, plus 18 against a live Docker daemon
-mypy src       107 source files, strict
+pytest         1113 fast tests, plus 23 against a live Docker daemon
+mypy src       108 source files, strict
 lint-imports   2 contracts kept, 0 broken
 ```
 
@@ -326,6 +352,10 @@ compatibility corpus — all validating clean.
 - **[`docs/writing-flows.md`](docs/writing-flows.md)** — the manual for USING
   it: the dialect in one table, where yeet looks for flow files, every command
   and flag, and how to write a step that runs on Windows too.
+- **[`docs/secrets.md`](docs/secrets.md)** — where a secret goes so the runner
+  finds it, why GitHub can never hand you a value back, and `GITHUB_TOKEN`.
+- **[`docs/docker.md`](docs/docker.md)** — reaching the daemon on macOS, Linux,
+  WSL and Windows, including "`docker ps` works but yeet says it doesn't".
 - **[`docs/handbook.md`](docs/handbook.md)** — the twenty-minute orientation:
   architecture, every command, how we work. Read this first *if you are working
   on yeet itself*.

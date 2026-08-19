@@ -460,3 +460,69 @@ def test_on_posix_the_pair_is_bash_and_sh(tmp_path, monkeypatch):
     assert argv[0] == "bash"
     assert argv[-1].endswith(".sh"), argv
     assert Path(argv[-1]).is_file()
+
+
+# --- the git-auth hint ---------------------------------------------------------
+#
+# `remote: Invalid username or token` is a true statement that tells the user
+# nothing they can act on, because the reason is not in their workflow — it is
+# that a container has none of their credentials. See `core/gitcreds.py`.
+
+
+def err(text: str) -> list[Chunk]:
+    return [(STDERR, text.encode())]
+
+
+AUTH_FAILURE = err(
+    "remote: Invalid username or token. Password authentication is not supported "
+    "for Git operations.\nfatal: Authentication failed for 'https://github.com/o/r.git/'\n"
+)
+
+
+def test_a_failed_clone_says_why_a_container_could_not_authenticate(tmp_path):
+    sink = ListSink()
+    job = make_job(steps=[make_step("git clone https://github.com/o/r.git")])
+    config = build_config(tmp_path, job, sink=sink)
+
+    results = run_steps(config, FakeExec((128, AUTH_FAILURE)))
+
+    assert results[0].status is Status.FAILURE
+    assert "no token was available" in sink.text()
+    assert "gh auth login" in sink.text()
+
+
+def test_the_hint_changes_when_a_token_WAS_passed(tmp_path):
+    """ "Give me a token" and "the token you gave me was refused" are different
+    bugs with different fixes, and sending someone to re-do a login that
+    already worked is worse than saying nothing."""
+    sink = ListSink()
+    job = make_job(steps=[make_step("git clone https://github.com/o/r.git")])
+    config = build_config(tmp_path, job, sink=sink)
+    config.base_env["GITHUB_TOKEN"] = "ghp_x"
+
+    run_steps(config, FakeExec((128, AUTH_FAILURE)))
+
+    assert "expired" in sink.text()
+    assert "gh auth login" not in sink.text()
+
+
+def test_a_step_that_merely_mentions_authentication_gets_no_hint(tmp_path):
+    """The scan is over git's own vocabulary, not over the word "auth"."""
+    sink = ListSink()
+    job = make_job(steps=[make_step("./build")])
+    config = build_config(tmp_path, job, sink=sink)
+
+    run_steps(config, FakeExec((1, err("error: the authentication module failed to build\n"))))
+
+    assert "gh auth login" not in sink.text()
+
+
+def test_a_passing_step_never_gets_the_hint(tmp_path):
+    """`git fetch` retries and succeeds; the first attempt's noise is not a bug."""
+    sink = ListSink()
+    job = make_job(steps=[make_step("git fetch || git fetch")])
+    config = build_config(tmp_path, job, sink=sink)
+
+    run_steps(config, FakeExec((0, AUTH_FAILURE)))
+
+    assert "gh auth login" not in sink.text()

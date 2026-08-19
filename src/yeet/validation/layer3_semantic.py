@@ -607,8 +607,21 @@ def check_secrets(wf: Workflow, available: set[str]) -> list[Diagnostic]:
                 message=f"`secrets.{name}` is not set",
                 file=wf.source,
                 pos=holder.pos,
-                help=f"Add it with `yeet secrets set {name}`, or put it in .env.",
-                note=f"secrets available: {known}",
+                help=(
+                    f"`yeet secrets set {name}` stores it encrypted in .yeet/.secrets; "
+                    f"or add a `{name}=...` line to .env in the project root."
+                ),
+                # Said here because this is where people look for it. The
+                # reflex on seeing this error is "but it IS set, it is in the
+                # repository settings on GitHub" — and GitHub's secrets are
+                # write-only: no API, no `gh`, and no runner can read a value
+                # back out. `yeet secrets import` lists the names for you; the
+                # values have to come from wherever you got them originally.
+                note=(
+                    f"secrets available locally: {known}. GitHub repository secrets are "
+                    "write-only — their values cannot be read back by anything, so running "
+                    "this workflow here needs a local copy."
+                ),
             )
         )
     return out

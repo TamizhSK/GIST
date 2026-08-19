@@ -121,6 +121,72 @@ def rm(key: Annotated[str, typer.Argument(help="Secret name.")]) -> None:
     typer.echo(f"Secret '{key}' removed.")
 
 
+def _github_secret_names(root: Path) -> set[str]:
+    """The NAMES of this repository's GitHub secrets. Never values — there are none.
+
+    GitHub's Actions secrets API is genuinely write-only: `GET /actions/secrets`
+    returns a list of names and timestamps and no `value` field exists anywhere
+    in the response. A secret is sealed with the repository's public key on the
+    way in and is only ever decrypted inside a GitHub-hosted runner. So no
+    local runner — not yeet, not `act`, not one you write yourself — can pull
+    them down, and any tool that claims to is doing something else.
+
+    Knowing the names is still worth the call. It is the difference between
+    "you forgot to set this" and "this is set upstream, you just need the value
+    here too", and the second one tells the user their workflow is fine.
+
+    Returns an empty set for every failure — no `gh`, not logged in, no GitHub
+    remote, a private repo the user cannot admin. This is a nicety on an
+    already-useful command and must never be the reason it fails.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    if shutil.which("gh") is None or not _has_github_remote(root):
+        return set()
+    try:
+        done = subprocess.run(
+            ["gh", "secret", "list", "--json", "name"],
+            cwd=root,
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if done.returncode != 0:
+        return set()
+    try:
+        data = json.loads(done.stdout.decode("utf-8", "replace") or "[]")
+    except ValueError:
+        return set()
+    if not isinstance(data, list):
+        return set()
+    return {str(row["name"]) for row in data if isinstance(row, dict) and row.get("name")}
+
+
+def _has_github_remote(root: Path) -> bool:
+    """Is this checkout connected to github.com at all?
+
+    Asked before `gh` is, because `gh secret list` in a directory with no
+    GitHub remote prompts for a repository — and a prompt in the middle of a
+    command that was reading YAML files is the last thing anyone expects.
+    """
+    import subprocess
+
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(root), "remote", "-v"],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0 and "github.com" in done.stdout.decode("utf-8", "replace")
+
+
 @secrets_app.command("import")
 def import_(
     path: Annotated[Path, typer.Option("--path", help="Project directory.")] = Path(),
@@ -187,6 +253,7 @@ def import_(
 
     env_path = root / ".env"
     existing = store.read_dotenv(root)
+    on_github = _github_secret_names(root)
 
     added: list[str] = []
     filled: list[str] = []
@@ -199,14 +266,19 @@ def import_(
         added.append(name)
         if value:
             filled.append(name)
+        if value:
+            where = typer.style(f"  {SYMBOL_FROM} from your environment", fg=typer.colors.GREEN)
+        elif on_github and name in on_github:
+            # The single most useful thing we can say about an empty one: it IS
+            # configured upstream, so the workflow is not broken and the name is
+            # not a typo — only the value is missing, and it has to come from
+            # wherever it was issued.
+            where = typer.style("  set on GitHub (value not readable)", fg=typer.colors.YELLOW)
+        else:
+            where = ""
         typer.echo(
             f"  {'+' if not value else '='} {name}"
-            f"{typer.style(f'  ({kind})', fg=typer.colors.BRIGHT_BLACK)}"
-            + (
-                typer.style(f"  {SYMBOL_FROM} from your environment", fg=typer.colors.GREEN)
-                if value
-                else ""
-            )
+            f"{typer.style(f'  ({kind})', fg=typer.colors.BRIGHT_BLACK)}{where}"
         )
 
     for name in sorted(wanted):
@@ -237,4 +309,10 @@ def import_(
             f"{blank} still need a value — edit .env, or `yeet secrets set <NAME>` "
             "to keep it encrypted instead.",
             fg=typer.colors.YELLOW,
+        )
+        typer.secho(
+            "The values cannot be fetched from GitHub: repository secrets are write-only, "
+            "so not even `gh` can read one back. Copy each one from wherever it was issued "
+            "(the provider's dashboard, your password manager, or a new token).",
+            fg=typer.colors.BRIGHT_BLACK,
         )

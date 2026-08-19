@@ -199,6 +199,139 @@ def runner_arch() -> str:
     return machine.upper()
 
 
+def docker_host_candidates() -> list[str]:
+    """Every endpoint worth trying when `docker.from_env()` cannot connect.
+
+    THE BUG THIS EXISTS FOR. `docker.from_env()` reads `$DOCKER_HOST` and
+    nothing else. The `docker` CLI reads `docker context`, which is a JSON file
+    under `~/.docker/contexts/` that no environment variable mentions. Every
+    non-Docker-Desktop runtime — Colima, Rancher Desktop, Podman, Lima, rootless
+    dockerd — installs itself by creating a context and NOT by exporting
+    `DOCKER_HOST`. On those machines `docker ps` works perfectly in the terminal
+    while yeet says "no Docker daemon is listening", and the user is looking at
+    a running daemon being told it does not exist. It is the single most
+    confusing failure this tool can produce, because the evidence in front of
+    them contradicts it.
+
+    So: the active context first (that is what the CLI itself would use), then
+    the well-known socket of every runtime that ships one. Ordered by how
+    likely it is to be the one the user means, and de-duplicated.
+
+    Cheap on purpose — no subprocess. `docker context inspect` would be the
+    tidy way to ask and it costs 200-800 ms of CLI startup on a cold cache, on
+    a path that runs before every single container job.
+    """
+    found: list[str] = []
+
+    def add(host: str | None) -> None:
+        if host and host not in found:
+            found.append(host)
+
+    add(_context_host())
+
+    if is_windows():
+        # The two named pipes Docker Desktop publishes. The Linux-engine one is
+        # what a WSL2 backend listens on and it is the default on every modern
+        # install; `docker_engine` is the Windows-containers/older-Desktop pipe.
+        add("npipe:////./pipe/dockerDesktopLinuxEngine")
+        add("npipe:////./pipe/docker_engine")
+        return found
+
+    for path in _socket_candidates():
+        if path.exists():
+            add(f"unix://{path}")
+    return found
+
+
+def _socket_candidates() -> list[Path]:
+    """Where each runtime puts its socket on macOS, Linux and WSL.
+
+    Existence-checked by the caller rather than probed: connecting to an absent
+    socket costs a full connect timeout each, and there are eight of them.
+    """
+    home = Path.home()
+    paths = [
+        Path("/var/run/docker.sock"),  # system dockerd, and WSL integration
+        home / ".docker" / "run" / "docker.sock",  # Docker Desktop 4.13+
+        home / ".colima" / "default" / "docker.sock",  # Colima, default profile
+        home / ".colima" / "docker.sock",  # Colima, older layout
+        home / ".rd" / "docker.sock",  # Rancher Desktop
+        home / ".lima" / "docker" / "sock" / "docker.sock",  # Lima
+        # Podman's Docker-compatible socket. It speaks the same API, and a
+        # `podman machine` user has no dockerd at all — refusing to look here
+        # would mean telling them to install Docker when they deliberately did
+        # not.
+        home / ".local" / "share" / "containers" / "podman" / "machine" / "podman.sock",
+    ]
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime_dir:
+        paths.append(Path(runtime_dir) / "docker.sock")  # rootless dockerd
+        paths.append(Path(runtime_dir) / "podman" / "podman.sock")
+    return paths
+
+
+def _context_host() -> str | None:
+    """The endpoint the `docker` CLI itself would use, read from its own files.
+
+    `$DOCKER_CONTEXT` overrides `~/.docker/config.json`'s `currentContext`,
+    which is the same precedence the CLI applies. The `default` context has no
+    stored metadata — it means "the built-in default", which is exactly what
+    `from_env()` already tried — so it is skipped rather than searched for.
+
+    Any malformed file at all means "no answer": this is a best-effort lookup
+    on the error path, and an exception here would replace "Docker is not
+    running" with a traceback about JSON.
+    """
+    config_dir = Path(os.environ.get("DOCKER_CONFIG") or (Path.home() / ".docker"))
+    name = os.environ.get("DOCKER_CONTEXT") or _current_context(config_dir)
+    if not name or name == "default":
+        return None
+
+    meta_root = config_dir / "contexts" / "meta"
+    try:
+        metas = sorted(meta_root.glob("*/meta.json"))
+    except OSError:
+        return None
+    for meta in metas:
+        host = _host_from_meta(meta, name)
+        if host:
+            return host
+    return None
+
+
+def _current_context(config_dir: Path) -> str | None:
+    import json
+
+    try:
+        data = json.loads((config_dir / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    name = data.get("currentContext") if isinstance(data, dict) else None
+    return str(name) if name else None
+
+
+def _host_from_meta(meta: Path, wanted: str) -> str | None:
+    """`{"Name": …, "Endpoints": {"docker": {"Host": …}}}` — or nothing.
+
+    Every context directory is scanned and matched on the recorded `Name`
+    rather than computed from it. The directory IS the SHA-256 of the name, but
+    reimplementing that here means a silent miss the day Docker changes it, and
+    there are only ever a handful of contexts to read.
+    """
+    import json
+
+    try:
+        data = json.loads(meta.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("Name") != wanted:
+        return None
+    endpoints = data.get("Endpoints")
+    docker = endpoints.get("docker") if isinstance(endpoints, dict) else None
+    host = docker.get("Host") if isinstance(docker, dict) else None
+    return str(host) if host else None
+
+
 def docker_host_hint() -> str:
     """What to tell the user when the daemon is unreachable.
 

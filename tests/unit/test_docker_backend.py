@@ -268,3 +268,107 @@ def test_the_base_image_resolves_and_has_the_tools(backend, tmp_path):
 
     assert result.status is Status.SUCCESS, sink.text()
     assert "git version" in sink.text()
+
+
+# --- git inside the container --------------------------------------------------
+#
+# A container is a fresh machine: no SSH agent, no ~/.gitconfig, no credential
+# helper, no keychain. Three separate failures fall out of that, and all three
+# reached the user as git's own words about something else. See
+# `core/gitcreds.py`.
+#
+# `runs_on="ubuntu-latest"` (and so `@slow`) rather than the plain `ubuntu:22.04`
+# the rest of this file pins: these are tests ABOUT git, and stock ubuntu has
+# none. The base image is also what a real `yeet run` uses, so this is the
+# configuration the fix has to hold in.
+
+
+@pytest.mark.slow
+def test_git_can_read_the_bind_mounted_repository(backend, tmp_path):
+    """`safe.directory`. The mount is owned by a uid that does not exist inside
+    the image, so without this every `git` command in the workspace dies on
+    "detected dubious ownership" — a fact about our mount, not their repo."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    sink = ListSink()
+    job = make_job(
+        "build", [make_step("git rev-parse --is-inside-work-tree")], runs_on="ubuntu-latest"
+    )
+
+    result = run(backend, tmp_path, job, sink=sink)
+
+    assert result.status is Status.SUCCESS, sink.text()
+    assert "dubious ownership" not in sink.text()
+
+
+@pytest.mark.slow
+def test_a_clone_without_credentials_fails_fast_instead_of_hanging(backend, tmp_path):
+    """`GIT_TERMINAL_PROMPT=0`. Without it git blocks on `Username for
+    'https://github.com':` against a terminal the container does not have, and
+    the step sits there until its timeout with nothing at all in the log."""
+    sink = ListSink()
+    job = make_job(
+        "build",
+        [make_step("git clone https://github.com/yeet-no-such-owner/private.git 2>&1 || true")],
+        runs_on="ubuntu-latest",
+    )
+
+    result = run(backend, tmp_path, job, sink=sink)
+
+    assert result.status is Status.SUCCESS  # `|| true` — the message is the subject
+    text = sink.text()
+    assert "terminal prompts disabled" in text or "could not read Username" in text
+
+
+@pytest.mark.slow
+def test_the_credential_helper_answers_with_the_job_token(backend, tmp_path):
+    """The manual-checkout fix. `git credential fill` is what git itself runs
+    before every fetch, so an answer here is an answer for `clone`, `fetch`,
+    `ls-remote` and `pip install git+https://…` alike."""
+    sink = ListSink()
+    job = make_job(
+        "build",
+        [make_step("printf 'protocol=https\\nhost=github.com\\n\\n' | git credential fill")],
+        runs_on="ubuntu-latest",
+    )
+    ctx = JobContext(
+        workspace=tmp_path, secrets=Masker(), sink=sink, env={"GITHUB_TOKEN": "ghp_fake"}
+    )
+
+    result = backend.run_job(make_instance(job), ctx)
+
+    assert result.status is Status.SUCCESS, sink.text()
+    assert "username=x-access-token" in sink.text()
+
+
+@pytest.mark.slow
+def test_the_token_never_reaches_the_git_config(backend, tmp_path):
+    """It is served from the environment by a helper precisely so that it is
+    never a config VALUE — `git config --list` is somewhere people paste from."""
+    sink = ListSink()
+    job = make_job("build", [make_step("git config --list || true")], runs_on="ubuntu-latest")
+    ctx = JobContext(
+        workspace=tmp_path, secrets=Masker(), sink=sink, env={"GITHUB_TOKEN": "ghp_fake_value"}
+    )
+
+    backend.run_job(make_instance(job), ctx)
+
+    assert "ghp_fake_value" not in sink.text()
+
+
+@pytest.mark.slow
+def test_an_ssh_url_is_rewritten_so_a_public_repo_still_clones(backend, tmp_path):
+    """A container has no SSH key and no agent, so `git@github.com:` cannot work
+    in there under any circumstances. Rewritten to HTTPS it does."""
+    sink = ListSink()
+    job = make_job(
+        "build",
+        [make_step("git ls-remote git@github.com:octocat/Hello-World.git HEAD")],
+        runs_on="ubuntu-latest",
+    )
+
+    result = run(backend, tmp_path, job, sink=sink)
+
+    assert result.status is Status.SUCCESS, sink.text()
+    assert "Permission denied (publickey)" not in sink.text()

@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from yeet.core import gitcreds
 from yeet.core.builtins import BuiltinContext, BuiltinResult, BuiltinRunner
 from yeet.core.diagnostics import DiagnosticBag
 from yeet.core.events import META, STDERR, STDOUT, LogEvent, LogSink
@@ -560,9 +561,10 @@ def _run_one(
 
     _step_started(config, name)
     _emit(config, name, META, f"::group::{name}")
+    saw_auth_failure = False
     try:
         exit_code, stream = executor.exec_step(request)
-        _pump(config, name, stream)
+        saw_auth_failure = _pump(config, name, stream)
     except TimeoutError:
         _emit(config, name, META, f"timed out after {step.timeout_minutes} min")
         exit_code = TIMEOUT_EXIT_CODE
@@ -579,6 +581,8 @@ def _run_one(
     status = Status.SUCCESS if exit_code == 0 else Status.FAILURE
     if step.id:
         config.step_outputs[step.id] = back[state_files.OUTPUT]
+    if status is Status.FAILURE and saw_auth_failure:
+        _emit(config, name, META, gitcreds.auth_hint(had_token=_has_token(request.env)))
     _conclude(config, step, status)
 
     if status is Status.FAILURE and step.continue_on_error:
@@ -638,19 +642,37 @@ def _with_state_files(
     return out
 
 
-def _pump(config: StepLoopConfig, step_name: str, stream: Iterable[Chunk]) -> None:
-    """Byte chunks in, whole masked lines out.
+def _pump(config: StepLoopConfig, step_name: str, stream: Iterable[Chunk]) -> bool:
+    """Byte chunks in, whole masked lines out. True if git said "who are you?".
 
     demux hands back arbitrary chunks, not lines. Masking half a line would let
     a secret split across two reads through unredacted, and `::add-mask::` only
     means anything if we see the whole directive — so the split happens here,
     once, before anything else looks at the text.
+
+    The return value is noticed HERE rather than re-scanned afterwards because
+    this is the only place the whole output passes through: the executor keeps
+    no transcript, and buffering one just to grep it later would mean holding
+    an unbounded `npm ci` in memory for the length of the step.
     """
+    noticed = False
     for stream_name, line in _lines(stream):
         command = parse_workflow_command(line)
         if command is not None and _handle_command(config, step_name, command):
             continue
+        noticed = noticed or gitcreds.looks_like_auth_failure(line)
         _emit(config, step_name, stream_name, line)
+    return noticed
+
+
+def _has_token(env: dict[str, str]) -> bool:
+    """Was a GitHub token in this step's environment at all?
+
+    Decides which of the two auth hints to print, and they send the user to
+    completely different places — "give me a token" versus "the token you gave
+    me was refused".
+    """
+    return any(env.get(name, "").strip() for name in gitcreds.TOKEN_ENV_NAMES)
 
 
 def _lines(stream: Iterable[Chunk]) -> Iterator[tuple[str, str]]:
