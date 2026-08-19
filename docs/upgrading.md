@@ -27,19 +27,19 @@ machine is touched.
 
 ```console
 $ yeet upgrade --check
-upgrading: 0.9 -> 0.10
+upgrading: 0.9 -> 1.0
 --check: not installing. `yeet upgrade` does it, or see https://github.com/TamizhSK/YEET/releases
 
 $ yeet upgrade
-upgrading: 0.9 -> 0.10
-yeet 0.10 installed. `yeet --version` to confirm.
+upgrading: 0.9 -> 1.0
+yeet 1.0 installed. `yeet --version` to confirm.
 ```
 
 Already current, it says so and stops:
 
 ```console
 $ yeet upgrade
-yeet 0.10 is the latest.
+yeet 1.0 is the latest.
 ```
 
 **It installs the wheel, not a git ref.** `pip install git+https://…` needs git,
@@ -73,7 +73,7 @@ Any published tag works, including older ones. One warning to expect:
 
 ```console
 $ yeet upgrade --version v0.6
-installing: 0.10 -> 0.6
+installing: 1.0 -> 0.6
 [!] v0.6 predates `yeet upgrade` — it will not be there afterwards.
     To come back, re-run the installer for your platform.
 ```
@@ -117,16 +117,16 @@ moved:
       !   replacing yeet 0.8
 ...
 [3/4] Installing yeet and its dependencies
-      ok  yeet 0.10
-      ok  upgraded 0.8 -> 0.10
+      ok  yeet 1.0
+      ok  upgraded 0.8 -> 1.0
 ```
 
 and when it did not:
 
 ```
-      !   replacing yeet 0.10
-      ok  yeet 0.10
-          already on 0.10 — reinstalled
+      !   replacing yeet 1.0
+      ok  yeet 1.0
+          already on 1.0 — reinstalled
 ```
 
 Your PATH entries, shell profile lines and Windows registry PATH are idempotent
@@ -180,13 +180,13 @@ keeps its metadata straight, so prefer it where you have it.
 without a commit:
 
 ```yaml
-- run: curl -fsSL https://raw.githubusercontent.com/TamizhSK/YEET/main/install.sh | sh -s -- --version v0.10
+- run: curl -fsSL https://raw.githubusercontent.com/TamizhSK/YEET/main/install.sh | sh -s -- --version v1.0
 ```
 
 Or install the wheel directly, which needs no git and no clone:
 
 ```yaml
-- run: pip install https://github.com/TamizhSK/YEET/releases/download/v0.10/yeet-0.10-py3-none-any.whl
+- run: pip install https://github.com/TamizhSK/YEET/releases/download/v1.0/yeet-1.0-py3-none-any.whl
 ```
 
 Never `yeet upgrade` in CI — it makes the run depend on what was published that
@@ -198,7 +198,7 @@ morning, which is the thing pinning exists to prevent.
 
 ```console
 $ yeet --version
-yeet 0.10
+yeet 1.0
 python 3.12.3 (/home/you/.local/share/yeet/venv/bin/python)
 os     Linux 6.8.0 (X64)
 docker 27.3.1

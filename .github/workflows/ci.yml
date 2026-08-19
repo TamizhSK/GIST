@@ -135,7 +135,24 @@ jobs:
           # on PATH for this call, or the job asserts the opposite of what the
           # environment variable asked for.
           $env:PATH = "$env:LOCALAPPDATA\yeet\bin;$env:PATH"
-          yeet doctor
+          # ASSERT ON THE REPORT, NOT ON THE EXIT CODE. `doctor` exits 1 when
+          # Docker is unreachable, which is correct — and whether this hosted
+          # runner has Docker Desktop UP varies between runs of the very same
+          # commit: one run reported `daemon 29.1.5 (windows/amd64)`, the next
+          # `Docker is installed but not running`, and only the second failed.
+          # This job tests the INSTALLER; making it depend on the runner's
+          # Docker state is a flake that says nothing about install.ps1. The
+          # macOS job already tolerates the same thing with `|| true`; this
+          # checks more than that, by allowing ONLY docker to be red.
+          $ErrorActionPreference = 'Continue'
+          $report = & yeet doctor 2>&1 | Out-String
+          Write-Host $report
+          $red = [regex]::Matches($report, '(?m)^\[FAIL\]\s+(\S+)') |
+                 ForEach-Object { $_.Groups[1].Value } |
+                 Where-Object { $_ -ne 'docker' }
+          if ($red) { Write-Host "unexpected doctor failures: $red"; exit 1 }
+          if ($report -notmatch 'yeet on PATH') { Write-Host 'no PATH check in report'; exit 1 }
+          exit 0
 
       - name: twice, without duplicating anything
         shell: powershell

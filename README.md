@@ -234,8 +234,8 @@ versions so you can see it happened:
 
 ```console
       !   replacing yeet 0.8
-      ok  yeet 0.10
-      ok  upgraded 0.8 -> 0.10
+      ok  yeet 1.0
+      ok  upgraded 0.8 -> 1.0
 ```
 
 Re-running the one-liner always works and does the same job; `upgrade` exists
