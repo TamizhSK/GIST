@@ -6,6 +6,17 @@ docs/rules.md is GENERATED from this table, so it can never drift.
 Ranges:  E0xx file · E1xx yaml · E2xx schema · E3xx semantic · W4xx lint · I4xx info
          E9xx internal (a bug in yeet, not in the user's workflow)
 
+E3xx also carries the two failures raised while EXECUTING rather than while
+validating — E315 (no image for this `cooked_on:`) and E321 (the daemon refused
+to start the container). Both answer "we could not get a container for this
+job", both are the user's problem and not a bug in yeet, and splitting them into
+a range of their own would put two halves of one answer in two places.
+
+EVERY CODE THE PRODUCT EMITS MUST HAVE A ROW HERE. `yeet explain` and
+docs/rules.md are both generated from this table, so a code that fires without a
+row is one the user reads in their own log and cannot look up — which is exactly
+what E321 did until it was added.
+
 Owner: Dev D (but everyone adds rows)
 Tier: 0
 """
@@ -91,6 +102,21 @@ RULES: dict[str, Rule] = {
         _e("E314", "missing required action input", 3),
         _e("E315", "`cooked_on:` could not be resolved to an image", 3),
         _e("E316", "invalid runner specification", 3),
+        # E320 and E321 were being EMITTED — by `executor/build.py` and
+        # `executor/docker_backend.py` — and neither was registered here. So
+        # `yeet explain YEET-E321`, run on a code the user is reading out of
+        # their own log, answered "Unknown diagnostic code", and docs/rules.md
+        # had no section for either. The registry is the single source of truth
+        # precisely so that cannot happen; both skipped the row.
+        # `tests/unit/test_codes_registered.py` is now the guard.
+        #
+        # Layer 3 rather than a runtime layer of their own, following E315:
+        # that is also a failure raised while executing (the image could not be
+        # resolved) and has sat in this family since it was written. The three
+        # codes all answer "we could not get a container for this job", and
+        # splitting them would put one answer in two places.
+        _e("E320", "the image could not be pulled or built", 3),
+        _e("E321", "the container could not be started", 3),
         _w("W317", "deprecated workflow syntax", 3),
         _w("W318", "unused output variable", 3),
         _w("W319", "`with:` supplies an input the action does not declare", 3),

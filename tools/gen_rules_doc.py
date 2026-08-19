@@ -76,6 +76,14 @@ def _example_for(code: str) -> str | None:
     return fixture.read_text(encoding="utf-8").strip()
 
 
+#: Registered at layer 3 with the rest of the "we could not get a container for
+#: this job" family, but raised while EXECUTING rather than while validating —
+#: so the layer-3 wording below ("a workflow that fails one of them cannot be
+#: run faithfully") is wrong about them twice over: nothing is wrong with the
+#: file, and the fix is on the machine. See the note in `core/codes.py`.
+RUNTIME_CODES = {"YEET-E315", "YEET-E320", "YEET-E321"}
+
+
 def _disable_hint(rule: Rule) -> str:
     if rule.layer == 4:
         return (
@@ -84,6 +92,11 @@ def _disable_hint(rule: Rule) -> str:
         )
     if rule.layer == 9:
         return "Not configurable — this reports a fault in yeet, not in your workflow."
+    if rule.code in RUNTIME_CODES:
+        return (
+            "Not configurable — this reports what Docker refused while the run "
+            "was starting, not a problem in your workflow file. See docs/docker.md."
+        )
     return (
         "Not configurable: layers 0-3 are correctness checks, and a workflow "
         "that fails one of them cannot be run faithfully."

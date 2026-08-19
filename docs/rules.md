@@ -412,6 +412,8 @@ jobs:
 | [`YEET-E314`](#yeet-e314) | `error` | missing required action input |
 | [`YEET-E315`](#yeet-e315) | `error` | `cooked_on:` could not be resolved to an image |
 | [`YEET-E316`](#yeet-e316) | `error` | invalid runner specification |
+| [`YEET-E320`](#yeet-e320) | `error` | the image could not be pulled or built |
+| [`YEET-E321`](#yeet-e321) | `error` | the container could not be started |
 | [`YEET-W317`](#yeet-w317) | `warning` | deprecated workflow syntax |
 | [`YEET-W318`](#yeet-w318) | `warning` | unused output variable |
 | [`YEET-W319`](#yeet-w319) | `warning` | `with:` supplies an input the action does not declare |
@@ -615,7 +617,7 @@ jobs:
 - **Layer:** 3 (Layer 3 — Semantic Validation)
 - **Default severity:** `error`
 - **Meaning:** `cooked_on:` could not be resolved to an image.
-- **Disabling:** Not configurable: layers 0-3 are correctness checks, and a workflow that fails one of them cannot be run faithfully.
+- **Disabling:** Not configurable — this reports what Docker refused while the run was starting, not a problem in your workflow file. See docs/docker.md.
 
 ---
 
@@ -639,6 +641,24 @@ jobs:
     steps:
       - run: echo hi
 ```
+
+---
+
+### `YEET-E320` — the image could not be pulled or built
+
+- **Layer:** 3 (Layer 3 — Semantic Validation)
+- **Default severity:** `error`
+- **Meaning:** the image could not be pulled or built.
+- **Disabling:** Not configurable — this reports what Docker refused while the run was starting, not a problem in your workflow file. See docs/docker.md.
+
+---
+
+### `YEET-E321` — the container could not be started
+
+- **Layer:** 3 (Layer 3 — Semantic Validation)
+- **Default severity:** `error`
+- **Meaning:** the container could not be started.
+- **Disabling:** Not configurable — this reports what Docker refused while the run was starting, not a problem in your workflow file. See docs/docker.md.
 
 ---
 
