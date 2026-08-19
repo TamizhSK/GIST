@@ -131,9 +131,14 @@ def test_candidates_are_deduplicated(tmp_path: Path, monkeypatch: pytest.MonkeyP
 def test_the_runtimes_people_actually_use_are_covered(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """`as_posix()`, not `str()`. These are POSIX socket paths — Windows never
+    reaches this list, because `docker_host_candidates` returns its named pipes
+    first — but the test still RUNS on Windows, where `str(Path("/var/run"))`
+    renders as `\\var\\run` and the assertion failed on the separator rather
+    than on anything it is trying to prove."""
     monkeypatch.setattr(platform_.Path, "home", classmethod(lambda _cls: tmp_path))
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
-    joined = " ".join(str(path) for path in platform_._socket_candidates())
+    joined = " ".join(path.as_posix() for path in platform_._socket_candidates())
     for marker in ("/var/run/docker.sock", ".colima", ".rd", ".lima", "podman", "/run/user/1000"):
         assert marker in joined
 
