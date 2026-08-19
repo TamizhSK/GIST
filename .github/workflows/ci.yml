@@ -147,7 +147,11 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $report = & yeet doctor 2>&1 | Out-String
           Write-Host $report
-          $red = [regex]::Matches($report, '(?m)^\[FAIL\]\s+(\S+)') |
+          # `(.+?)\s{2,}` not `(\S+)`: doctor pads the name column and separates
+          # it from the detail with TWO spaces, so `\S+` captures "yeet" out of
+          # "yeet on PATH" and a real failure would be reported under a name
+          # that does not exist.
+          $red = [regex]::Matches($report, '(?m)^\[FAIL\]\s+(.+?)\s{2,}') |
                  ForEach-Object { $_.Groups[1].Value } |
                  Where-Object { $_ -ne 'docker' }
           if ($red) { Write-Host "unexpected doctor failures: $red"; exit 1 }
