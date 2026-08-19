@@ -167,3 +167,47 @@ def test_an_installed_copy_is_not_a_dev_checkout(
     fake.touch()
     monkeypatch.setattr(up, "__file__", str(fake))
     assert up.dev_checkout() is None
+
+
+# --- the one-way door ----------------------------------------------------------
+
+
+def test_pinning_below_the_upgrade_command_warns_first(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--version v0.6` works, and then `yeet upgrade` is gone — 0.6 never had
+    it. Saying so afterwards is no use; the way back is an installer URL."""
+    import typer
+
+    monkeypatch.setattr(up, "dev_checkout", lambda: None)
+    monkeypatch.setattr(up, "_release", lambda _tag: ("0.6", "https://x/wheel"))
+    with pytest.raises(typer.Exit):
+        up.upgrade(check=True, version="v0.6")
+    err = capsys.readouterr().err
+    assert "predates `yeet upgrade`" in err
+    assert "re-run the installer" in err
+
+
+def test_pinning_at_or_above_it_does_not_warn(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import typer
+
+    monkeypatch.setattr(up, "dev_checkout", lambda: None)
+    monkeypatch.setattr(up, "_release", lambda _tag: (up.UPGRADE_SINCE, "https://x/wheel"))
+    with pytest.raises(typer.Exit):
+        up.upgrade(check=True, version=f"v{up.UPGRADE_SINCE}")
+    assert "predates" not in capsys.readouterr().err
+
+
+def test_a_plain_upgrade_never_warns(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only pinning can go backwards; `yeet upgrade` alone only ever goes up."""
+    import typer
+
+    monkeypatch.setattr(up, "dev_checkout", lambda: None)
+    monkeypatch.setattr(up, "_release", lambda _tag: ("99.0", "https://x/wheel"))
+    with pytest.raises(typer.Exit):
+        up.upgrade(check=True)
+    assert "predates" not in capsys.readouterr().err

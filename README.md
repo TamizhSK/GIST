@@ -226,9 +226,21 @@ One command on every platform. It downloads the wheel attached to the latest
 published release and installs it into the environment yeet already lives in —
 no git, no re-clone, no rebuild, and nothing else on your machine is touched.
 
-Re-running the install one-liner still works and does the same job; `upgrade`
-exists because remembering a URL is not a reasonable thing to ask of someone
-who installed the tool four months ago.
+**On v0.8 or earlier?** `yeet upgrade` ships *in* v0.9, so it is not on your
+machine yet — a command cannot be back-fitted into a version already installed.
+Re-run the install one-liner for your platform once, and you are on the current
+release with `yeet upgrade` available from then on. The installer now names both
+versions so you can see it happened:
+
+```console
+      !   replacing yeet 0.8
+      ok  yeet 0.9
+      ok  upgraded 0.8 -> 0.9
+```
+
+Re-running the one-liner always works and does the same job; `upgrade` exists
+because remembering a URL is not a reasonable thing to ask of someone who
+installed the tool four months ago.
 
 On a development checkout it refuses and tells you to `git pull` — upgrading
 would replace your working tree with a published wheel.
@@ -362,7 +374,7 @@ syntax, and the whole suite is green:
 
 ```
 make check     six gates green (lint · format · imports · types · noprint · test)
-pytest         1148 fast tests, plus 23 against a live Docker daemon
+pytest         1151 fast tests, plus 23 against a live Docker daemon
 mypy src       109 source files, strict
 lint-imports   2 contracts kept, 0 broken
 ```

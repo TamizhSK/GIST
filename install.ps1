@@ -804,8 +804,27 @@ if ($Local) {
 # --- 2. an environment that belongs to yeet alone ----------------------------
 Write-Step 'Creating an isolated environment'
 
+# The version being replaced, read BEFORE the directory is removed. $null when
+# there is no install, or it is too broken to answer.
+#
+# WHY THIS EXISTS. Re-running this script IS the upgrade path, and for anyone on
+# 0.8 or earlier it is the ONLY one - `yeet upgrade` ships in 0.9, and a command
+# cannot be back-fitted into a version already on someone's laptop. The script
+# did the upgrade correctly and said "replacing the existing install", which is
+# equally true of reinstalling the identical version. So the one question a
+# person re-running this has - "did it actually move?" - was the one thing the
+# output would not answer.
+$OldVersion = $null
 if (Test-Path $HomeDir) {
-    Write-Warn 'replacing the existing install'
+    $previous = Join-Path (Join-Path $HomeDir 'venv\Scripts') 'yeet.exe'
+    if (Test-Path $previous) {
+        # Through Invoke-Native: an install too broken to run is exactly the one
+        # being replaced, and its stderr must not kill the replacement.
+        $line = Invoke-Native { & $previous --version 2>$null } | Select-Object -First 1
+        if ($line -match '\s(\S+)') { $OldVersion = $Matches[1] }
+    }
+    if ($OldVersion) { Write-Warn "replacing yeet $OldVersion" }
+    else             { Write-Warn 'replacing the existing install' }
     # The launcher lives under $HomeDir; a running shell holding it open would
     # make this fail, which is a clearer error than a half-removed install.
     Remove-Item -Recurse -Force $HomeDir
@@ -889,6 +908,15 @@ if (-not $tui) { Write-Warn 'no dashboard: --tui will use the streaming view' }
 $VenvYeet = Join-Path (Join-Path $VenvDir 'Scripts') 'yeet.exe'
 $banner = Invoke-Native { & $VenvYeet --version 2>$null } | Select-Object -First 1
 Write-Ok "$banner"
+
+# The answer to "did it actually move?", said once, in the only place that knows
+# both halves. An upgrade that looks identical to a no-op is why people run an
+# installer three times and then open an issue.
+$NewVersion = if ($banner -match '\s(\S+)') { $Matches[1] } else { $null }
+if ($OldVersion -and $NewVersion) {
+    if ($OldVersion -eq $NewVersion) { Write-Plain "      already on $NewVersion - reinstalled" }
+    else { Write-Ok "upgraded $OldVersion -> $NewVersion" }
+}
 
 # --- 4. a launcher on PATH ---------------------------------------------------
 Write-Step 'Putting yeet on your PATH'
@@ -1019,6 +1047,7 @@ Write-Plain '  yeet doctor   is this machine set up to run a workflow?'
 Write-Plain '  yeet scan     what is this project, and what flows does it have?'
 Write-Plain '  yeet check    are the workflow files written correctly?'
 Write-Plain '  yeet run      run them, in Docker or your own shell'
+Write-Plain '  yeet upgrade  get the next version, without this script'
 Write-Plain '  yeet --help   every command'
 Write-Host ''
 Write-Colour "  $dockerNote" $dockerColour

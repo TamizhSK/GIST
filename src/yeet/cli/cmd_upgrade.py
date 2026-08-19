@@ -42,6 +42,13 @@ API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 API_TAG = f"https://api.github.com/repos/{REPO}/releases/tags/{{tag}}"
 RELEASES_URL = f"https://github.com/{REPO}/releases"
 
+UPGRADE_SINCE = "0.9"
+"""The release this command first shipped in.
+
+Anything older has no `yeet upgrade` at all, which makes `--version v0.6` a
+one-way door: it works, and then the way back is gone. Pinning below this warns
+before it happens rather than after."""
+
 TIMEOUT_S = 20
 """One HTTP call against the GitHub API. Short: `yeet upgrade --check` may run
 from a shell prompt, and a hung network must not be indistinguishable from a
@@ -216,6 +223,19 @@ def upgrade(
 
     change = "installing" if pinned else "upgrading"
     typer.echo(f"{change}: {__version__} -> {target}")
+    if pinned and is_newer(UPGRADE_SINCE, target):
+        # A ONE-WAY DOOR, said out loud before it closes. This command did not
+        # exist before 0.9, so pinning below it removes the only thing that
+        # could bring you back — `yeet upgrade` on 0.6 is "No such command",
+        # and the way out is the install one-liner nobody has memorised.
+        typer.secho(
+            f"{SYMBOL_WARN} v{target} predates `yeet upgrade` — it will not be there "
+            "afterwards.\n"
+            "    To come back, re-run the installer for your platform "
+            f"(see {RELEASES_URL}).",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
     if check:
         typer.secho(
             f"--check: not installing. `yeet upgrade` does it, or see {RELEASES_URL}",

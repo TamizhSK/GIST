@@ -717,8 +717,36 @@ fi
 
 # ── 2. an environment that belongs to yeet alone ──────────────────────────────
 step "Creating an isolated environment"
+
+#: The version being replaced, read BEFORE the directory is removed. "" when
+#: there is no install or it is too broken to answer.
+#:
+#: WHY THIS EXISTS. Re-running this script IS the upgrade path, and for anyone
+#: on 0.8 or earlier it is the ONLY one — `yeet upgrade` ships in 0.9 and a
+#: command cannot be back-fitted into a version already on someone's laptop.
+#: The script did the upgrade correctly and said "replacing the existing
+#: install", which is true of a reinstall of the identical version too. So the
+#: one question a person re-running this has — "did it actually move?" — was
+#: the one thing the output would not answer.
+OLD_VERSION=''
+previous_version() {
+    for candidate in "$HOME_DIR/venv/bin/yeet" "$HOME_DIR/venv/Scripts/yeet.exe"; do
+        [ -x "$candidate" ] || continue
+        # `head -1`: `yeet --version` also reports the interpreter, the OS and
+        # Docker. `|| true` throughout: an install too broken to run is exactly
+        # the one being replaced, and it must not take the replacement with it.
+        "$candidate" --version 2>/dev/null | head -1 | awk '{print $2}' || true
+        return
+    done
+}
+
 if [ -d "$HOME_DIR" ]; then
-    warn "replacing the existing install"
+    OLD_VERSION="$(previous_version 2>/dev/null || true)"
+    if [ -n "$OLD_VERSION" ]; then
+        warn "replacing yeet $OLD_VERSION"
+    else
+        warn "replacing the existing install"
+    fi
     rm -rf "$HOME_DIR"
 fi
 mkdir -p "$HOME_DIR"
@@ -820,7 +848,20 @@ fi
 # stays one line on both.
 VENV_YEET="$VENV_BIN/yeet"
 [ -x "$VENV_YEET" ] || VENV_YEET="$VENV_BIN/yeet.exe"
-ok "$("$VENV_YEET" --version 2>/dev/null | head -1 || echo yeet)"
+NEW_LINE="$("$VENV_YEET" --version 2>/dev/null | head -1 || echo yeet)"
+NEW_VERSION="$(printf '%s' "$NEW_LINE" | awk '{print $2}')"
+ok "$NEW_LINE"
+
+# The answer to "did it actually move?", said once, in the only place that
+# knows both halves. An upgrade that looks identical to a no-op is why people
+# run an installer three times and then open an issue.
+if [ -n "$OLD_VERSION" ] && [ -n "$NEW_VERSION" ]; then
+    if [ "$OLD_VERSION" = "$NEW_VERSION" ]; then
+        info "${MUTE}already on $NEW_VERSION — reinstalled${N}"
+    else
+        ok "upgraded $OLD_VERSION -> $NEW_VERSION"
+    fi
+fi
 
 # ── 4. a launcher on PATH ─────────────────────────────────────────────────────
 # A tiny exec shim rather than a symlink: a symlink into the venv works, but a
@@ -1152,6 +1193,7 @@ if [ "$DESC_W" -lt 20 ]; then
     printf '  %syeet scan%s    what is this project?\n' "$B" "$N"
     printf '  %syeet check%s   are the workflows correct?\n' "$B" "$N"
     printf '  %syeet run%s     run them\n' "$B" "$N"
+    printf '  %syeet upgrade%s next time, instead of this script\n' "$B" "$N"
     printf '  %syeet --help%s  every command\n' "$B" "$N"
 else
 
@@ -1163,6 +1205,7 @@ for pair in \
     "yeet scan|what is this project, and what flows does it have?" \
     "yeet check|are the workflow files written correctly?" \
     "yeet run|run them, in Docker or your own shell" \
+    "yeet upgrade|get the next version, without this script" \
     "yeet --help|every command"
 do
     cmd=${pair%%|*}; desc=${pair#*|}
