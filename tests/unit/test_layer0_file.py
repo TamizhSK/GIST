@@ -29,11 +29,31 @@ def test_layer0_utf8_bom(tmp_path: Path) -> None:
     assert any(d.code == "YEET-W004" for d in bag.items)
 
 
-def test_layer0_crlf(tmp_path: Path) -> None:
+def test_layer0_uniform_crlf_is_silent(tmp_path: Path) -> None:
+    """A plain Windows checkout. Git for Windows ships `core.autocrlf=true`, so
+    EVERY file looks like this there — and it cannot bite, because
+    `script.write_step_script` normalises to LF before any script reaches a
+    shell. W006 fired on every workflow file on every run for a condition
+    nobody could act on and nobody needed to."""
     crlf_file = tmp_path / "crlf.yml"
     crlf_file.write_bytes(b"name: test\r\non: push\r\n")
     bag = check(crlf_file)
+    assert not any(d.code == "YEET-W006" for d in bag.items)
+
+
+def test_layer0_mixed_line_endings(tmp_path: Path) -> None:
+    """Half-converted by an editor. This one survives into a `run:` scalar."""
+    mixed = tmp_path / "mixed.yml"
+    mixed.write_bytes(b"name: test\r\non: push\njobs: {}\r\n")
+    bag = check(mixed)
     assert any(d.code == "YEET-W006" for d in bag.items)
+
+
+def test_layer0_pure_lf_is_silent(tmp_path: Path) -> None:
+    lf_file = tmp_path / "lf.yml"
+    lf_file.write_bytes(b"name: test\non: push\n")
+    bag = check(lf_file)
+    assert not any(d.code == "YEET-W006" for d in bag.items)
 
 
 def test_layer0_tab_indentation(tmp_path: Path) -> None:

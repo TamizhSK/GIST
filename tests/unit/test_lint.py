@@ -145,3 +145,66 @@ def test_run_lints_with_override(tmp_path: Path) -> None:
     bag = run_lints(wf, wf_file, cfg)
     codes = [d.code for d in bag.items]
     assert "YEET-W401" not in codes
+
+
+# --- W405: `set -euo pipefail` is bash, and only bash ---------------------------
+
+
+MULTILINE = "echo one\necho two\necho three"
+
+
+def _shell_diags(tmp_path: Path, *, shell: str | None = None, defaults: dict | None = None):
+    from yeet.validation.layer4_lint.shell import ShellRule
+
+    wf_file = tmp_path / "test.yml"
+    wf = Workflow(
+        source=wf_file,
+        pos=P0,
+        name="w",
+        jobs={
+            "build": Job(
+                key="build",
+                pos=P0,
+                name="build",
+                steps=[Step(pos=P0, name="s", run=MULTILINE, shell=shell)],
+            )
+        },
+        defaults=defaults or {},
+    )
+    return [d.code for d in ShellRule().check(wf, wf_file)]
+
+
+def test_w405_fires_on_a_plain_multiline_run(tmp_path: Path) -> None:
+    """The case the rule was written for: no `shell:`, so bash in a container."""
+    assert "YEET-W405" in _shell_diags(tmp_path)
+
+
+def test_w405_fires_on_an_explicit_posix_shell(tmp_path: Path) -> None:
+    for shell in ("bash", "sh"):
+        assert "YEET-W405" in _shell_diags(tmp_path, shell=shell), shell
+
+
+def test_w405_is_silent_on_shells_where_the_advice_would_break_the_step(
+    tmp_path: Path,
+) -> None:
+    """`set -euo pipefail` is a bash builtin. Telling a pwsh, python, node or
+    cmd step to put it at the top is advice that breaks the step if followed —
+    and it fired on exactly the cross-platform workflows that need most help."""
+    for shell in ("pwsh", "powershell", "python", "node", "cmd"):
+        assert "YEET-W405" not in _shell_diags(tmp_path, shell=shell), shell
+
+
+def test_w405_respects_a_shell_that_is_already_safe(tmp_path: Path) -> None:
+    """`shell: bash -eo pipefail {0}` is GitHub's own spelling of "already done"."""
+    assert "YEET-W405" not in _shell_diags(tmp_path, shell="bash -eo pipefail {0}")
+
+
+def test_w405_reads_workflow_level_defaults(tmp_path: Path) -> None:
+    """`defaults: {run: {shell: pwsh}}` at the top applies to every step under it."""
+    defaults = {"run": {"shell": "pwsh"}}
+    assert "YEET-W405" not in _shell_diags(tmp_path, defaults=defaults)
+    assert "YEET-W405" in _shell_diags(tmp_path, defaults={"run": {"shell": "bash"}})
+
+
+def test_a_step_shell_beats_the_workflow_default(tmp_path: Path) -> None:
+    assert "YEET-W405" in _shell_diags(tmp_path, shell="bash", defaults={"run": {"shell": "pwsh"}})

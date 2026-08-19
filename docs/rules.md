@@ -27,7 +27,7 @@ YEET-W407: off      # silence entirely
 | [`YEET-E003`](#yeet-e003) | `error` | non-UTF-8 character encoding |
 | [`YEET-E005`](#yeet-e005) | `error` | tabs used for indentation |
 | [`YEET-W004`](#yeet-w004) | `warning` | UTF-8 BOM present |
-| [`YEET-W006`](#yeet-w006) | `warning` | CRLF line endings |
+| [`YEET-W006`](#yeet-w006) | `warning` | mixed CRLF and LF line endings |
 | [`YEET-W007`](#yeet-w007) | `warning` | file size exceeds 1 MB |
 
 ---
@@ -77,11 +77,11 @@ YEET-W407: off      # silence entirely
 
 ---
 
-### `YEET-W006` — CRLF line endings
+### `YEET-W006` — mixed CRLF and LF line endings
 
 - **Layer:** 0 (Layer 0 — File & Encoding)
 - **Default severity:** `warning`
-- **Meaning:** CRLF line endings.
+- **Meaning:** mixed CRLF and LF line endings.
 - **Disabling:** Not configurable: layers 0-3 are correctness checks, and a workflow that fails one of them cannot be run faithfully.
 
 ---
@@ -711,7 +711,7 @@ jobs:
 | [`YEET-W402`](#yeet-w402) | `warning` | action pinned to a moving ref |
 | [`YEET-W403`](#yeet-w403) | `warning` | image pinned to :latest tag |
 | [`YEET-W404`](#yeet-w404) | `warning` | possible hardcoded secret |
-| [`YEET-W405`](#yeet-w405) | `warning` | multi-line run without `set -euo pipefail` |
+| [`YEET-W405`](#yeet-w405) | `warning` | multi-line POSIX-shell run without `set -euo pipefail` |
 | [`YEET-W406`](#yeet-w406) | `warning` | run step exceeds 50 lines |
 | [`YEET-W407`](#yeet-w407) | `warning` | job has no timeout |
 | [`YEET-W408`](#yeet-w408) | `warning` | continue-on-error on deploy job |
@@ -769,11 +769,11 @@ jobs:
 
 ---
 
-### `YEET-W405` — multi-line run without `set -euo pipefail`
+### `YEET-W405` — multi-line POSIX-shell run without `set -euo pipefail`
 
 - **Layer:** 4 (Layer 4 — Lint & Code Standards)
 - **Default severity:** `warning`
-- **Meaning:** multi-line run without `set -euo pipefail`.
+- **Meaning:** multi-line POSIX-shell run without `set -euo pipefail`.
 - **Disabling:** Set `YEET-W405: off` in `.yeet/lint.yml` to silence it, or `YEET-W405: error` to make it blocking.
 
 ---

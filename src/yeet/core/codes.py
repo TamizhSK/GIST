@@ -48,7 +48,7 @@ RULES: dict[str, Rule] = {
         _e("E003", "non-UTF-8 character encoding", 0),
         _w("W004", "UTF-8 BOM present", 0),
         _e("E005", "tabs used for indentation", 0),
-        _w("W006", "CRLF line endings", 0),
+        _w("W006", "mixed CRLF and LF line endings", 0),
         _w("W007", "file size exceeds 1 MB", 0),
         # Layer 1 — yaml
         _e("E101", "YAML parse failure", 1),
@@ -99,7 +99,7 @@ RULES: dict[str, Rule] = {
         _w("W402", "action pinned to a moving ref", 4),
         _w("W403", "image pinned to :latest tag", 4),
         _w("W404", "possible hardcoded secret", 4),
-        _w("W405", "multi-line run without `set -euo pipefail`", 4),
+        _w("W405", "multi-line POSIX-shell run without `set -euo pipefail`", 4),
         _w("W406", "run step exceeds 50 lines", 4),
         _w("W407", "job has no timeout", 4),
         _w("W408", "continue-on-error on deploy job", 4),

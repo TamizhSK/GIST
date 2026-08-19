@@ -97,15 +97,28 @@ def check(path: Path) -> DiagnosticBag:
             )
         )
 
-    if b"\r\n" in raw_bytes:
+    # MIXED endings only, never uniform CRLF. Git for Windows ships with
+    # `core.autocrlf=true`, so on a Windows machine EVERY checked-out file has
+    # CRLF — and this rule fired on every workflow file, on every `check` and
+    # every `run`, for a condition that cannot bite: `script.write_step_script`
+    # normalises to LF unconditionally before any script reaches a shell. A
+    # warning nobody can act on and nobody needs to act on is how a whole layer
+    # gets ignored.
+    #
+    # Mixed endings are a different thing and worth saying: a file half-converted
+    # by an editor can put a stray `\r` inside a multi-line `run:` scalar, and
+    # that one DOES survive into the script.
+    crlf = raw_bytes.count(b"\r\n")
+    lone_lf = raw_bytes.count(b"\n") - crlf
+    if crlf and lone_lf:
         bag.add(
             Diagnostic(
                 code="YEET-W006",
                 severity=Severity.WARNING,
-                message="CRLF (Windows) line endings detected",
+                message="Mixed CRLF and LF line endings in one file",
                 file=path,
                 pos=Position(line=0, col=0),
-                help="Convert line endings to LF (Unix style)",
+                help="Normalise the file to one ending — `.gitattributes`: `* text=auto eol=lf`",
             )
         )
 

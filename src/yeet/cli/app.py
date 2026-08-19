@@ -29,6 +29,7 @@ from yeet.cli import (
     cmd_run,
     cmd_scan,
     cmd_secrets,
+    cmd_upgrade,
     cmd_watch,
 )
 
@@ -53,6 +54,7 @@ app.command("prune")(cmd_prune.prune)
 app.add_typer(cmd_hooks.hooks_app, name="hooks")
 app.add_typer(cmd_secrets.secrets_app, name="secrets")
 app.command("doctor")(cmd_doctor.doctor)
+app.command("upgrade")(cmd_upgrade.upgrade)
 # ----------------------------------------------------------------------------
 
 

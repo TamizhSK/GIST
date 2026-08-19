@@ -189,8 +189,33 @@ def collect() -> list[Check]:
     checks.append(_git())
     checks.append(_writable("config dir", config_dir()))
     checks.append(_writable("cache dir", cache_dir()))
+    checks.append(_dashboard())
     checks.extend(_workspace_speed())
     return checks
+
+
+def _dashboard() -> Check:
+    """Is `yeet run --tui` available on this machine?
+
+    Asked because the answer is invisible otherwise. `--tui` is a FLAG on `run`,
+    not a top-level command, so it does not appear in `yeet --help` — people
+    look for `yeet --tui`, find nothing, and conclude the dashboard was never
+    built. And when Textual really is missing, the fallback line scrolls past in
+    the middle of a run nobody was reading yet.
+
+    Never a failure: Textual is an optional dependency and a runner that will
+    not start because a display library is absent has failed at its actual job.
+    """
+    from yeet.reporting import dashboard
+
+    if dashboard.is_available():
+        return Check("dashboard", OK, "textual found - `yeet run --tui` works")
+    return Check(
+        "dashboard",
+        INFO,
+        "no textual - `yeet run --tui` falls back to the streaming view",
+        "pip install textual  (optional)",
+    )
 
 
 def doctor(ctx: typer.Context) -> None:

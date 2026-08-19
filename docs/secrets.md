@@ -61,12 +61,30 @@ overrides both and is not written anywhere.
 
 ### Encrypted: `yeet secrets set`
 
+> **You do not create anything by hand.** `.yeet/.secrets` is a **file**, not a
+> folder — one encrypted JSON blob — and `yeet secrets set` creates it, and the
+> `.yeet/` directory around it, the first time you run it. There is no
+> `mkdir .yeet/.secrets`; making a *directory* of that name is the one thing
+> that will stop it working.
+
 ```console
 $ yeet secrets set NPM_TOKEN
 Enter secret value for NPM_TOKEN: ********
 Passphrase for .yeet/.secrets: ********
 Saved the passphrase to your OS keyring.
 Secret 'NPM_TOKEN' stored (encrypted).
+```
+
+Run it from the project root — the same directory you point `yeet run` at.
+That is the whole configuration step:
+
+```
+your-project/
+├── .yeet/
+│   ├── flows/main.yml     <- the workflow that says ${{ secrets.NPM_TOKEN }}
+│   └── .secrets           <- created by `yeet secrets set`  (encrypted, gitignored)
+├── .env                   <- or here, in plain text        (gitignored)
+└── ...your code
 ```
 
 The value never appears in a shell argument, so it never reaches your shell
@@ -141,6 +159,46 @@ adds a workflow. `--dry-run` reports without writing.
 anywhere works exactly the same; you just do not get the "set on GitHub" line.
 
 ---
+
+## How the YAML picks it up
+
+The workflow file never names a path. It asks for a secret by NAME, and yeet
+resolves that name out of the pool it built from `.yeet/.secrets`, `.env` and
+`--secret`:
+
+```yaml
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}   # <- the name, not a path
+          AWS_REGION: ${{ vars.AWS_REGION }}
+```
+
+`${{ secrets.NPM_TOKEN }}` is resolved before the step runs and the value is
+put in that step's environment, so `$NODE_AUTH_TOKEN` inside the container is
+the real token. This is byte-for-byte the same file GitHub runs — you do not
+write anything yeet-specific to make local secrets work, which is the point.
+
+Reading it straight from the environment works too, and is what a hand-written
+`git clone` needs:
+
+```yaml
+      - run: echo "$NPM_TOKEN" | docker login -u me --password-stdin
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+```
+
+Whole run, end to end:
+
+```console
+$ cd your-project
+$ yeet secrets set NPM_TOKEN     # once. creates .yeet/.secrets
+$ yeet check                     # names resolve? E307 if not
+$ yeet run                       # the value reaches the container, masked in the log
+```
 
 ## What happens at run time
 

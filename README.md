@@ -55,7 +55,7 @@ five check layers over it.
 ```
   THE VALIDATION PIPELINE — layer 4 prints opinions, only 0–3 can stop the run
 
-  layer 0  bytes           E001 unreadable · E002 empty · E005 tabs · W006 CRLF
+  layer 0  bytes           E001 unreadable · E002 empty · E005 tabs · W006 mixed endings
   layer 1  YAML            ruamel round-trip · E102 duplicate keys · W105 on:→True
   ── dialect pass          parser/aliases.py::normalize()  → canonical keys
   layer 2  schema          jsonschema against the canonical form · did-you-mean
@@ -214,6 +214,25 @@ so you can go end-to-end before you ever install a daemon. To remove it:
 Neither installer needs `sudo` or an elevated prompt. On POSIX it writes to
 `~/.local/share/yeet` and `~/.local/bin`; on Windows, `%LOCALAPPDATA%\yeet`.
 
+## Updating
+
+```console
+$ yeet upgrade --check      # is there a newer one?  changes nothing
+$ yeet upgrade              # get it
+$ yeet upgrade --version v0.8   # pin, or go back
+```
+
+One command on every platform. It downloads the wheel attached to the latest
+published release and installs it into the environment yeet already lives in —
+no git, no re-clone, no rebuild, and nothing else on your machine is touched.
+
+Re-running the install one-liner still works and does the same job; `upgrade`
+exists because remembering a URL is not a reasonable thing to ask of someone
+who installed the tool four months ago.
+
+On a development checkout it refuses and tells you to `git pull` — upgrading
+would replace your working tree with a published wheel.
+
 ## Watching a run
 
 `yeet run` streams: one line at a time, safe to pipe, safe to redirect, and it
@@ -243,6 +262,10 @@ The dashboard stays up when the run ends — it is a thing you watch, and the
 alternate screen is discarded on exit, so it waits for `q` rather than taking
 the run away with it. The summary is printed to your scrollback afterwards
 either way.
+
+**It is a flag on `run`, not a command** — `yeet run --tui`, never `yeet --tui`,
+so it does not appear in `yeet --help`. `yeet doctor` has a `dashboard` line
+that says whether it will work on this machine.
 
 Needs Textual, which both installers put in yeet's own virtualenv for you. If
 you installed with bare `pip`/`pipx`/`uv`, ask for it: `pip install 'yeet[tui]'`.
@@ -339,8 +362,8 @@ syntax, and the whole suite is green:
 
 ```
 make check     six gates green (lint · format · imports · types · noprint · test)
-pytest         1113 fast tests, plus 23 against a live Docker daemon
-mypy src       108 source files, strict
+pytest         1148 fast tests, plus 23 against a live Docker daemon
+mypy src       109 source files, strict
 lint-imports   2 contracts kept, 0 broken
 ```
 

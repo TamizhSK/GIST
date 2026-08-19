@@ -85,7 +85,7 @@ def run(
     target = _pick_flow(project, flow)
 
     bag, workflow = validate_file(target, upto=4)
-    _gate(bag, target)
+    _gate(bag, target, verbose=verbose)
     if workflow is None:
         raise typer.Exit(EXIT_BAD_WORKFLOW)
 
@@ -466,23 +466,45 @@ def _pick_flow(project: Project, flow: str | None) -> Path:
     raise typer.Exit(EXIT_BAD_WORKFLOW)
 
 
-def _gate(bag: DiagnosticBag, source: Path) -> None:
+def _gate(bag: DiagnosticBag, source: Path, *, verbose: bool = False) -> None:
     """The gate. Errors stop the run BEFORE any container exists.
 
-    Warnings (layer 4) print and never block — that is the difference between a
-    tool people keep pointed at their repo and one they turn off.
+    ERRORS are rendered in full, with their code frames: the run is about to
+    stop and the frame is the whole reason the user can fix it in one pass.
+
+    WARNINGS ARE COUNTED, NOT PRINTED. `yeet run` is the command you type to
+    watch your build; it is not the command you type to read a lint report, and
+    `yeet check` already exists and prints every one of them with context. A
+    screenful of layer 4 before every single run buries the thing the user
+    actually asked for — and a report you scroll past on the way to the output
+    you wanted is a report nobody reads. `-v` prints them here for the case
+    where you do want both at once.
+
+    Layer 4 still RUNS, and still never blocks. Only where it is displayed
+    changed.
     """
     from yeet.reporting.render import render_diagnostics
 
-    if len(bag):
-        typer.echo(render_diagnostics(bag), err=True)
     if bag.has_errors():
+        typer.echo(render_diagnostics(bag), err=True)
         typer.secho(
             f"{len(bag.errors)} error(s) in {source} — refusing to run.",
             fg=typer.colors.RED,
             err=True,
         )
         raise typer.Exit(EXIT_BAD_WORKFLOW)
+
+    if not bag.warnings:
+        return
+    if verbose:
+        typer.echo(render_diagnostics(bag), err=True)
+        return
+    codes = ", ".join(sorted({d.code for d in bag.warnings}))
+    typer.secho(
+        f"[!] {len(bag.warnings)} warning(s) ({codes}) — `yeet check` shows them, `-v` here.",
+        fg=typer.colors.YELLOW,
+        err=True,
+    )
 
 
 def _only(plan: ExecutionPlan, job: str) -> ExecutionPlan:
