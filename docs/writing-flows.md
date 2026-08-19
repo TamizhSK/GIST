@@ -272,7 +272,37 @@ $ yeet hooks install        # run flows from post-commit / pre-push
 $ yeet prune                # this project's images, containers and .yeet/tmp
 $ yeet prune --actions      # also empty the `uses:` cache
 $ yeet logs 20260818-221940-9aa3   # a specific run
+$ yeet upgrade --check      # is there a newer yeet?  changes nothing
+$ yeet upgrade              # get it
 ```
+
+### Staying current
+
+```console
+$ yeet upgrade --check          # ask; installs nothing
+$ yeet upgrade                  # install the latest published release
+$ yeet upgrade --version v0.9   # pin, or go back
+```
+
+It downloads the wheel attached to the latest release and installs it into the
+environment yeet already lives in — no git, no re-clone, no rebuild. On a
+development checkout it refuses and points at `git pull`, because upgrading
+would replace your working tree with a published wheel.
+
+**On 0.8 or earlier this command is not there.** It shipped in 0.9, and a
+command cannot be back-fitted into a version already on a laptop. Re-run the
+install one-liner for your platform once and you are current, with `yeet
+upgrade` available from then on. The installer names both versions so you can
+see it happened:
+
+```
+      !   replacing yeet 0.8
+      ok  yeet 0.10
+      ok  upgraded 0.8 -> 0.10
+```
+
+The whole picture — every install method, rolling back, and pinning in CI — is
+in [`upgrading.md`](upgrading.md).
 
 ### Exit codes
 

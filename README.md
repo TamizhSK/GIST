@@ -229,21 +229,22 @@ no git, no re-clone, no rebuild, and nothing else on your machine is touched.
 **On v0.8 or earlier?** `yeet upgrade` ships *in* v0.9, so it is not on your
 machine yet — a command cannot be back-fitted into a version already installed.
 Re-run the install one-liner for your platform once, and you are on the current
-release with `yeet upgrade` available from then on. The installer now names both
+release with `yeet upgrade` available from then on. The installer names both
 versions so you can see it happened:
 
 ```console
       !   replacing yeet 0.8
-      ok  yeet 0.9
-      ok  upgraded 0.8 -> 0.9
+      ok  yeet 0.10
+      ok  upgraded 0.8 -> 0.10
 ```
 
 Re-running the one-liner always works and does the same job; `upgrade` exists
 because remembering a URL is not a reasonable thing to ask of someone who
-installed the tool four months ago.
+installed the tool four months ago. On a development checkout it refuses and
+tells you to `git pull`.
 
-On a development checkout it refuses and tells you to `git pull` — upgrading
-would replace your working tree with a published wheel.
+**Rolling back, pinning in CI, pipx/uv, and what upgrading never touches — in
+[`docs/upgrading.md`](docs/upgrading.md).**
 
 ## Watching a run
 
@@ -387,6 +388,8 @@ compatibility corpus — all validating clean.
 - **[`docs/writing-flows.md`](docs/writing-flows.md)** — the manual for USING
   it: the dialect in one table, where yeet looks for flow files, every command
   and flag, and how to write a step that runs on Windows too.
+- **[`docs/upgrading.md`](docs/upgrading.md)** — `yeet upgrade`, the installer
+  path from v0.8 or earlier, rolling back, and pinning a version in CI.
 - **[`docs/secrets.md`](docs/secrets.md)** — where a secret goes so the runner
   finds it, why GitHub can never hand you a value back, and `GITHUB_TOKEN`.
 - **[`docs/docker.md`](docs/docker.md)** — reaching the daemon on macOS, Linux,
